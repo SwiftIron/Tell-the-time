@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lär dig klockan</title>
+
+<!-- =====================================================================
+  TEACHING CLOCK  (single file, zero dependencies)
+  Licensed under the MIT License. See the LICENSE file in this repository.
+  ---------------------------------------------------------------------
+  Nothing is loaded from the internet: no web fonts, no libraries,
+  no images, no emoji. It works offline, behind school firewalls,
+  inside a Google Sites embed, and on Chromebooks in kiosk mode.
+
+  File map:
+    PART A  CSS   - colours, page layout, the white guide panel
+    PART B  HTML  - the SVG clock + the guide panel
+    PART C  JS    - builds the face, moves the hands, keeps time
+===================================================================== -->
+
+<style>
+/* =====================================================================
+   PART A1 : COLOURS
+   One place to change the whole look. The SVG clock uses these too
+   (through CSS classes), so the hands and the guide always match.
+===================================================================== */
+:root {
+  color-scheme: dark;
+
+  --bg-centre:  #34307a;   /* glow behind the clock     */
+  --bg-edge:    #17153a;   /* dark edge of the page     */
+  --paper:      #ffffff;   /* clock face + guide panel  */
+  --ink:        #1d1d3b;   /* numbers and body text     */
+
+  --hour:       #4b4e9c;   /* short hand (purple)       */
+  --minute:     #d6337f;   /* long hand (pink)          */
+  --second:     #e63946;   /* thin hand (red)           */
+
+  --tick-major: #2f3170;
+  --tick-minor: #b9b7d6;
+
+  /* System fonts only - every Chromebook, Windows PC and Mac has one */
+  --font: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* =====================================================================
+   PART A2 : PAGE LAYOUT
+   A vertical stack:  title  /  clock (takes all spare space)  /  guide
+===================================================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.6rem 0.8rem;
+  background: radial-gradient(ellipse at 50% 40%, var(--bg-centre) 0%, var(--bg-edge) 75%);
+  font-family: var(--font);
+  color: var(--ink);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.title {
+  flex-shrink: 0;
+  color: #ffffff;
+  font-size: clamp(1.1rem, 3.4vmin, 2rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+/* The clock area grows to fill whatever height is left over */
+.clock-area {
+  flex: 1 1 auto;
+  min-height: 0;          /* lets the flex item shrink below its content size */
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clock {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;      /* lets the drop shadow spill outside the circle */
+}
+
+/* =====================================================================
+   PART A3 : SVG CLOCK STYLES
+   SVG shapes are coloured with "fill" and "stroke" instead of
+   "background" and "border".
+===================================================================== */
+.hour-fill    { fill: var(--hour);   stroke: var(--hour); }
+.minute-fill  { fill: var(--minute); stroke: var(--minute); }
+.second-fill  { fill: var(--second); stroke: var(--second); }
+
+.hand-shape   { stroke-linejoin: round; }
+
+.face-number {
+  fill: var(--ink);
+  font-family: var(--font);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge-pill   { stroke: #ffffff; stroke-width: 3; }
+.badge-text {
+  fill: #ffffff;
+  font-family: var(--font);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================================
+   PART A4 : THE GUIDE PANEL (colour key + two-line instructions)
+   White panel, dark text: readable on any screen, from across a room.
+===================================================================== */
+.guide {
+  flex-shrink: 0;
+  width: min(100%, 54rem);
+  background: var(--paper);
+  border-radius: 16px;
+  padding: 0.55rem 1.3rem 0.7rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* --- Colour key: little drawings of each hand --- */
+.key {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+  padding-bottom: 0.45rem;
+  margin-bottom: 0.45rem;
+  border-bottom: 2px solid #ecebf5;
+  font-size: clamp(0.75rem, 1.8vmin, 0.95rem);
+  font-weight: 700;
+}
+.key-item { display: flex; align-items: center; gap: 0.5rem; }
+
+.swatch { display: inline-block; border-radius: 99px; }
+.swatch-hour   { width: 1.4rem; height: 0.5rem;  background: var(--hour); }
+.swatch-minute { width: 2.2rem; height: 0.32rem; background: var(--minute); }
+.swatch-second { width: 2.4rem; height: 0.14rem; background: var(--second); }
+
+/* --- The two instruction lines (a real sequence: hour first, then minutes) --- */
+.steps {
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+  font-size: clamp(0.95rem, 2.5vmin, 1.35rem);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.steps li { display: flex; align-items: center; gap: 0.65rem; text-wrap: pretty; }
+
+.step-num {
+  flex-shrink: 0;
+  width: 1.7em;
+  height: 1.7em;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.85em;
+}
+.step-num.hour   { background: var(--hour); }
+.step-num.minute { background: var(--minute); }
+
+.word-hour   { color: var(--hour);   font-weight: 800; }
+.word-minute { color: #b8206a;       font-weight: 800; }  /* slightly darker pink for text contrast */
+
+/* =====================================================================
+   PART A5 : SMALL SCREENS / SHORT EMBEDS
+   If the Google Sites embed box is short, drop the extras so the
+   clock stays big. The instructions are the last thing to go.
+===================================================================== */
+@media (max-height: 560px) {
+  .title, .key { display: none; }
+}
+@media (max-height: 380px) {
+  .guide { display: none; }
+}
+</style>
+</head>
+
+<body>
+
+<!-- =====================================================================
+  PART B1 : TITLE
+===================================================================== -->
+<h1 class="title">Lär dig klockan!</h1>
+
+<!-- =====================================================================
+  PART B2 : THE CLOCK (SVG)
+  ---------------------------------------------------------------------
+  viewBox="0 0 500 500" is our private grid: 500 x 500 units with the
+  centre at (250, 250). The browser scales that grid to fit the screen,
+  so every position below is exact on any display size.
+
+  Drawing order = stacking order (later items sit on top):
+    face -> ticks -> numbers -> hands -> number badges -> centre cap
+===================================================================== -->
+<div class="clock-area">
+<svg class="clock" id="clock" viewBox="0 0 500 500" role="img" aria-labelledby="clockLabel">
+  <title id="clockLabel">Klocka</title>
+
+  <defs>
+    <!-- Soft shadow under the whole clock -->
+    <filter id="clockShadow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="580" height="600">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+    <!-- Small shadow under the hands so they look raised off the face -->
+    <filter id="handShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+      <feDropShadow dx="2" dy="3" stdDeviation="2" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+    <!-- Rim colour: lighter at the top, darker at the bottom -->
+    <linearGradient id="rimGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#6c6fc6"/>
+      <stop offset="100%" stop-color="#34367a"/>
+    </linearGradient>
+    <!-- Face colour: a gentle curve of light, like a real dome of glass -->
+    <radialGradient id="faceGrad" cx="45%" cy="38%" r="70%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="80%"  stop-color="#f7f6fd"/>
+      <stop offset="100%" stop-color="#e8e6f6"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ---------- Rim + face ---------- -->
+  <circle cx="250" cy="250" r="246" fill="url(#rimGrad)" filter="url(#clockShadow)"/>
+  <circle cx="250" cy="250" r="232" fill="url(#faceGrad)" stroke="#2f3170" stroke-width="2"/>
+
+  <!-- ---------- Filled in by JavaScript (PART C3) ---------- -->
+  <g id="ticks"></g>
+  <g id="numbers"></g>
+
+  <!-- ---------- Hands ----------
+       Each hand is drawn pointing straight up at 12 o'clock.
+       JavaScript turns it with transform="rotate(angle 250 250)",
+       which means "spin around the centre point (250, 250)".
+       The outer <g> holds the shadow so it always falls the same way. -->
+  <g filter="url(#handShadow)">
+    <g id="hourHand">
+      <polygon class="hand-shape hour-fill" stroke-width="4"
+               points="244,274 256,274 258,250 253.5,134 246.5,134 242,250"/>
+    </g>
+    <g id="minuteHand">
+      <polygon class="hand-shape minute-fill" stroke-width="3"
+               points="246,282 254,282 256,250 252,44 248,44 244,250"/>
+    </g>
+  </g>
+
+  <g id="secondHand">
+    <line class="second-fill" x1="250" y1="292" x2="250" y2="32" stroke-width="2.5" stroke-linecap="round"/>
+    <circle class="second-fill" cx="250" cy="282" r="7"/>
+  </g>
+
+  <!-- ---------- Number badges (sit ON TOP of every hand) ----------
+       These never rotate, so the numbers always read the right way up.
+       JavaScript slides them along their hand every second. -->
+  <g id="hourBadge">
+    <rect class="badge-pill hour-fill"/>
+    <text class="badge-text" text-anchor="middle" dy="0.36em">12</text>
+  </g>
+  <g id="minuteBadge">
+    <rect class="badge-pill minute-fill"/>
+    <text class="badge-text" text-anchor="middle" dy="0.36em">00</text>
+  </g>
+
+  <!-- ---------- Centre cap (covers where the hands meet) ---------- -->
+  <circle cx="250" cy="250" r="13" fill="#2f3170" stroke="#ffffff" stroke-width="3"/>
+  <circle cx="250" cy="250" r="4.5" class="second-fill"/>
+</svg>
+</div>
+
+<!-- =====================================================================
+  PART B3 : GUIDE PANEL
+===================================================================== -->
+<section class="guide" aria-label="Så läser du klockan">
+  <div class="key">
+    <span class="key-item"><span class="swatch swatch-hour"></span>Korta visaren: timmar</span>
+    <span class="key-item"><span class="swatch swatch-minute"></span>Långa visaren: minuter</span>
+    <span class="key-item"><span class="swatch swatch-second"></span>Tunna visaren: sekunder</span>
+  </div>
+  <ol class="steps">
+    <li><span class="step-num hour">1</span>
+        <span>Den <span class="word-hour">korta lila visaren</span> visar timmen. Läs siffran på den.</span></li>
+    <li><span class="step-num minute">2</span>
+        <span>Den <span class="word-minute">långa rosa visaren</span> visar minuterna. Räkna i femsteg från 12:an.</span></li>
+  </ol>
+</section>
+
+<!-- =====================================================================
+  PART C : JAVASCRIPT
+===================================================================== -->
+<script>
+(function () {
+  "use strict";
+
+  /* ===================================================================
+     PART C1 : SETTINGS  (safe for teachers to change)
+  =================================================================== */
+  const SETTINGS = {
+    showSecondHand: true,       // false = hide the thin red hand
+    showNumbersOnHands: true    // false = practice mode (no number badges)
+  };
+
+  /* ===================================================================
+     PART C2 : MEASUREMENTS  (all in SVG units, centre = 250,250)
+     The badge distances were chosen so the two badges can never
+     bump into each other or cover a number on the face, even when
+     the hands sit right on top of each other (e.g. 10:54).
+  =================================================================== */
+  const CX = 250, CY = 250;
+
+  const TICK_OUTER        = 224;
+  const TICK_MINOR_INNER  = 213;
+  const TICK_MAJOR_INNER  = 203;
+
+  const NUMBER_RADIUS     = 173;   // where 1-12 sit
+  const NUMBER_SIZE       = 36;
+  const NUMBER_SIZE_BIG   = 40;    // 12, 3, 6 and 9 are a little larger
+
+  const BADGES = {
+    hour:   { radius: 40,  fontSize: 26, padX: 9, padY: 6 },
+    minute: { radius: 108, fontSize: 22, padX: 8, padY: 5 }
+  };
+  const DIGIT_WIDTH = 0.58;        // one digit is about 0.58 x the font size wide
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  /* Turn "distance from centre + angle" into an (x, y) point.
+     Angle 0 = straight up (12 o'clock), increasing clockwise. */
+  function pointAt(radius, angleDeg) {
+    const rad = (angleDeg - 90) * Math.PI / 180;
+    return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) };
+  }
+
+  function makeSvg(tag, attrs) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const name in attrs) node.setAttribute(name, attrs[name]);
+    return node;
+  }
+
+  /* ===================================================================
+     PART C3 : BUILD THE FACE  (runs once)
+  =================================================================== */
+  // 60 tick marks: one per minute, a longer one every 5 minutes
+  const ticks = document.getElementById("ticks");
+  for (let i = 0; i < 60; i++) {
+    const isMajor = i % 5 === 0;
+    const outer = pointAt(TICK_OUTER, i * 6);
+    const inner = pointAt(isMajor ? TICK_MAJOR_INNER : TICK_MINOR_INNER, i * 6);
+    ticks.appendChild(makeSvg("line", {
+      x1: outer.x, y1: outer.y, x2: inner.x, y2: inner.y,
+      stroke: isMajor ? "var(--tick-major)" : "var(--tick-minor)",
+      "stroke-width": isMajor ? 4.5 : 2,
+      "stroke-linecap": "round"
+    }));
+  }
+
+  // The numbers 1 to 12, spaced 30 degrees apart
+  const numbers = document.getElementById("numbers");
+  for (let n = 1; n <= 12; n++) {
+    const p = pointAt(NUMBER_RADIUS, n * 30);
+    const label = makeSvg("text", {
+      x: p.x, y: p.y, dy: "0.36em",           // dy centres digits vertically
+      "text-anchor": "middle",
+      "font-size": n % 3 === 0 ? NUMBER_SIZE_BIG : NUMBER_SIZE,
+      class: "face-number"
+    });
+    label.textContent = n;
+    numbers.appendChild(label);
+  }
+
+  /* ===================================================================
+     PART C4 : GRAB THE MOVING PARTS  (once, so updates are fast)
+  =================================================================== */
+  const hourHand    = document.getElementById("hourHand");
+  const minuteHand  = document.getElementById("minuteHand");
+  const secondHand  = document.getElementById("secondHand");
+  const hourBadge   = document.getElementById("hourBadge");
+  const minuteBadge = document.getElementById("minuteBadge");
+  const clockLabel  = document.getElementById("clockLabel");
+
+  if (!SETTINGS.showSecondHand)     secondHand.style.display = "none";
+  if (!SETTINGS.showNumbersOnHands) {
+    hourBadge.style.display = "none";
+    minuteBadge.style.display = "none";
+  }
+
+  // Badge text sizes are set here so the pill maths below always matches
+  hourBadge.querySelector("text").setAttribute("font-size", BADGES.hour.fontSize);
+  minuteBadge.querySelector("text").setAttribute("font-size", BADGES.minute.fontSize);
+
+  /* Place a badge on its hand and size its pill to fit the digits.
+     The pill size is worked out from the number of digits, so it is
+     correct immediately - no waiting for fonts, no measuring. */
+  function placeBadge(badge, settings, text, angleDeg) {
+    const height = settings.fontSize + settings.padY * 2;
+    const width  = Math.max(height,  // never narrower than tall, so "3" sits in a circle
+                            text.length * settings.fontSize * DIGIT_WIDTH + settings.padX * 2);
+    const spot   = pointAt(settings.radius, angleDeg);
+
+    const pill = badge.querySelector("rect");
+    pill.setAttribute("x", -width / 2);
+    pill.setAttribute("y", -height / 2);
+    pill.setAttribute("width", width);
+    pill.setAttribute("height", height);
+    pill.setAttribute("rx", height / 2);
+
+    badge.querySelector("text").textContent = text;
+    badge.setAttribute("transform", "translate(" + spot.x + " " + spot.y + ")");
+  }
+
+  /* ===================================================================
+     PART C5 : DRAW THE TIME
+     Every hand travels 360 degrees:
+       second hand: 60 seconds per lap -> 6 degrees per second
+       minute hand: 60 minutes per lap -> 6 degrees per minute
+                    (+0.1 degree per second so it glides)
+       hour hand:   12 hours per lap   -> 30 degrees per hour
+                    (+0.5 degree per minute so it creeps between numbers)
+  =================================================================== */
+  let lastSpoken = "";
+
+  function drawTime(now) {
+    const h = now.getHours();
+    const m = now.getMinutes();
+    const s = now.getSeconds();
+    const hour12 = h % 12 || 12;              // 0 -> 12, 13 -> 1, etc.
+
+    const secondAngle = s * 6;
+    const minuteAngle = m * 6 + s * 0.1;
+    const hourAngle   = (h % 12) * 30 + m * 0.5 + s * (0.5 / 60);
+
+    hourHand.setAttribute("transform",   "rotate(" + hourAngle   + " 250 250)");
+    minuteHand.setAttribute("transform", "rotate(" + minuteAngle + " 250 250)");
+    secondHand.setAttribute("transform", "rotate(" + secondAngle + " 250 250)");
+
+    const minuteText = String(m).padStart(2, "0");
+    placeBadge(hourBadge,   BADGES.hour,   String(hour12), hourAngle);
+    placeBadge(minuteBadge, BADGES.minute, minuteText,     minuteAngle);
+
+    // Screen readers hear the time once per minute, not every second
+    const spoken = "Klockan är " + hour12 + ":" + minuteText;   // read aloud by screen readers
+    if (spoken !== lastSpoken) {
+      clockLabel.textContent = spoken;
+      lastSpoken = spoken;
+    }
+  }
+
+  /* ===================================================================
+     PART C6 : KEEP TIME
+     Instead of "repeat every 1000 ms" (which slowly drifts), each tick
+     waits until the start of the next real second. If a Chromebook
+     sleeps or the tab is hidden, the clock snaps to the right time
+     the moment it is visible again.
+  =================================================================== */
+  function tick() {
+    drawTime(new Date());
+    setTimeout(tick, 1000 - (Date.now() % 1000) + 10);
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) drawTime(new Date());
+  });
+
+  tick();
+})();
+</script>
+</body>
+</html>
