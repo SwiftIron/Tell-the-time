@@ -2,105 +2,228 @@
 <html lang="sv">
 <head>
 <meta charset="UTF-8">
+<!-- SECURITY: only the code inside this file may run, and the page cannot
+     connect to the internet at all. This line is written by
+     tools/update-csp.py. Read SECURITY.md before changing it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-9w/ikBdP0aZamw18Eh4i8Ae6ur31i/2UUh8GUevUzqE='; style-src 'sha256-5/HRo2XQbNdJP8DldYlDOgDV/D7KP7tt9pPvJwuay8Q='; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types classroom">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lär dig klockan</title>
+<title>Learn to Tell the Time</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13.5' fill='%23fff' stroke='%234b4e9c' stroke-width='4'/%3E%3Cpath d='M16 9v7l5 3' fill='none' stroke='%23d6337f' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 
 <!-- =====================================================================
-  TEACHING CLOCK  (single file, zero dependencies)
+  CLASSROOM CLOCK AND VISUAL TIMER  (single file, zero dependencies)
   Licensed under the MIT License. See the LICENSE file in this repository.
   ---------------------------------------------------------------------
-  Nothing is loaded from the internet: no web fonts, no libraries,
-  no images, no emoji. It works offline, behind school firewalls,
-  inside a Google Sites embed, and on Chromebooks in kiosk mode.
+  Two views, switched with the tabs at the top:
+    CLOCK  - the teaching clock, with numbers on the hands and the time in words
+    TIMER  - a visual countdown plus a list of task cards
+
+  LANGUAGE: set by the lang attribute on the <html> tag above.
+    lang="en" = English, lang="sv" = Swedish. Nothing else changes.
 
   File map:
-    PART A  CSS   - colours, page layout, the white guide panel
-    PART B  HTML  - the SVG clock + the guide panel
-    PART C  JS    - builds the face, moves the hands, keeps time
+    SETTINGS      - just below, safe for teachers to change
+    PART A  CSS   - colours, layout, clock, timer, task cards, panel
+    PART B  HTML  - header tabs, clock view, timer view, teacher panel
+    PART C  JS    - settings, words, security, clock, timer, tasks, panel
+
+  SECURITY: PART A and PART C are locked by fingerprints in the
+  Content-Security-Policy line above. If you change them, the page will
+  not start until you run:   python3 tools/update-csp.py
+  The SETTINGS block is data, not code, so it can be changed freely.
 ===================================================================== -->
+
+<!-- =====================================================================
+  SETTINGS  (safe for teachers to change)
+  Change the value after each colon. Keep the quotes, colons and commas
+  exactly as they are. If a value is mistyped, its default is used.
+
+    showSecondHand        true or false    the thin red hand
+    showNumbersOnHands    true or false    false = practice mode, no number badges
+    showTimeInWords       true or false    the time in words under the clock
+    showReadAloudButton   true or false    the speaker button that says the time
+    startView             "clock" or "timer"   which tab opens first
+    defaultTimerMinutes   1 to 60          the timer's starting time
+    chime                 true or false    sound when the timer finishes
+    colours               a colour such as "#4b4e9c" or "purple"
+===================================================================== -->
+<script type="application/json" id="settings">
+{
+  "showSecondHand": true,
+  "showNumbersOnHands": true,
+  "showTimeInWords": true,
+  "showReadAloudButton": true,
+  "startView": "clock",
+  "defaultTimerMinutes": 10,
+  "chime": true,
+  "colours": {
+    "hourHand": "#4b4e9c",
+    "minuteHand": "#d6337f",
+    "secondHand": "#e63946",
+    "nowHighlight": "#ffc83d"
+  }
+}
+</script>
 
 <style>
 /* =====================================================================
    PART A1 : COLOURS
-   One place to change the whole look. The SVG clock uses these too
-   (through CSS classes), so the hands and the guide always match.
 ===================================================================== */
 :root {
   color-scheme: dark;
 
   --bg-centre:  #34307a;   /* glow behind the clock     */
   --bg-edge:    #17153a;   /* dark edge of the page     */
-  --paper:      #ffffff;   /* clock face + guide panel  */
+  --paper:      #ffffff;   /* clock face, cards, panel  */
   --ink:        #1d1d3b;   /* numbers and body text     */
+  --muted:      #5d5c7a;   /* small helper text         */
+  --line:       #e3e1f0;   /* light borders in panel    */
+  --soft:       #efeefa;   /* light button background   */
 
   --hour:       #4b4e9c;   /* short hand (purple)       */
-  --minute:     #d6337f;   /* long hand (pink)          */
+  --minute:     #d6337f;   /* long hand + timer (pink)  */
   --second:     #e63946;   /* thin hand (red)           */
 
   --tick-major: #2f3170;
   --tick-minor: #b9b7d6;
 
-  /* System fonts only - every Chromebook, Windows PC and Mac has one */
+  --now:        #ffc83d;   /* highlight for the current task */
+  --done:       #2e8b57;   /* tick on finished tasks          */
+
   --font: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 /* =====================================================================
-   PART A2 : PAGE LAYOUT
-   A vertical stack:  title  /  clock (takes all spare space)  /  guide
+   PART A2 : PAGE LAYOUT + HEADER TABS
 ===================================================================== */
 * { margin: 0; padding: 0; box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body { height: 100%; }
 
 body {
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.6rem 0.8rem;
-  background: radial-gradient(ellipse at 50% 40%, var(--bg-centre) 0%, var(--bg-edge) 75%);
+  display: grid;
+  grid-template-rows: auto 1fr;          /* header, then the active view */
+  grid-template-columns: minmax(0, 1fr); /* never let wide content stretch the page */
+  background: radial-gradient(ellipse at 50% 45%, var(--bg-centre) 0%, var(--bg-edge) 75%);
   font-family: var(--font);
   color: var(--ink);
   user-select: none;
   -webkit-user-select: none;
 }
+input { user-select: text; -webkit-user-select: text; }
+
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+button:focus-visible, input:focus-visible {
+  outline: 3px solid var(--now);
+  outline-offset: 2px;
+}
+
+/* Header: tabs on the left, title in the middle, timer buttons on the right */
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.8rem 0.2rem;
+}
+
+.tabs {
+  justify-self: start;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: clamp(0.85rem, 2vmin, 1.05rem);
+}
+.tab[aria-selected="true"] { background: var(--paper); color: var(--ink); }
+.tab-icon { width: 1.25em; height: 1.25em; flex-shrink: 0; }
+
+/* Little countdown shown on the Timer tab while you are on the Clock view */
+.tab-time {
+  font-variant-numeric: tabular-nums;
+  background: var(--minute);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  font-size: 0.85em;
+}
+.tab-time:empty { display: none; }
+.tab-time.alert { animation: flash 1s steps(2, jump-none) infinite; }
+@keyframes flash { 50% { background: var(--now); color: var(--ink); } }
 
 .title {
-  flex-shrink: 0;
   color: #ffffff;
   font-size: clamp(1.1rem, 3.4vmin, 2rem);
   font-weight: 700;
   line-height: 1.2;
   text-align: center;
+  white-space: nowrap;
 }
 
-/* The clock area grows to fill whatever height is left over */
-.clock-area {
+.actions { justify-self: end; display: flex; gap: 0.5rem; }
+
+/* Shared button looks */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: clamp(0.85rem, 1.9vmin, 1rem);
+}
+.btn svg { width: 1.2em; height: 1.2em; flex-shrink: 0; }
+.btn-light   { background: var(--paper); color: var(--ink); }
+.btn-primary { background: var(--minute); color: #ffffff; }
+.btn-soft    { background: var(--soft); color: var(--ink); }
+.btn-outline { background: transparent; color: #ffffff; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55); }
+
+main { min-height: 0; position: relative; }
+
+.view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem 0.8rem;
+}
+
+/* =====================================================================
+   PART A3 : CLOCK VIEW
+===================================================================== */
+.clock-area, .dial-area {
   flex: 1 1 auto;
-  min-height: 0;          /* lets the flex item shrink below its content size */
+  min-height: 0;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-
-.clock {
+.clock, .timer-svg {
   width: 100%;
   height: 100%;
   display: block;
-  overflow: visible;      /* lets the drop shadow spill outside the circle */
+  overflow: visible;
 }
 
-/* =====================================================================
-   PART A3 : SVG CLOCK STYLES
-   SVG shapes are coloured with "fill" and "stroke" instead of
-   "background" and "border".
-===================================================================== */
 .hour-fill    { fill: var(--hour);   stroke: var(--hour); }
 .minute-fill  { fill: var(--minute); stroke: var(--minute); }
 .second-fill  { fill: var(--second); stroke: var(--second); }
-
 .hand-shape   { stroke-linejoin: round; }
 
 .face-number {
@@ -110,7 +233,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.badge-pill   { stroke: #ffffff; stroke-width: 3; }
+.badge-pill { stroke: #ffffff; stroke-width: 3; }
 .badge-text {
   fill: #ffffff;
   font-family: var(--font);
@@ -118,10 +241,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* =====================================================================
-   PART A4 : THE GUIDE PANEL (colour key + two-line instructions)
-   White panel, dark text: readable on any screen, from across a room.
-===================================================================== */
+/* Guide panel under the clock */
 .guide {
   flex-shrink: 0;
   width: min(100%, 54rem);
@@ -130,8 +250,6 @@ body {
   padding: 0.55rem 1.3rem 0.7rem;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
-
-/* --- Colour key: little drawings of each hand --- */
 .key {
   display: flex;
   justify-content: center;
@@ -144,13 +262,21 @@ body {
   font-weight: 700;
 }
 .key-item { display: flex; align-items: center; gap: 0.5rem; }
-
 .swatch { display: inline-block; border-radius: 99px; }
 .swatch-hour   { width: 1.4rem; height: 0.5rem;  background: var(--hour); }
 .swatch-minute { width: 2.2rem; height: 0.32rem; background: var(--minute); }
 .swatch-second { width: 2.4rem; height: 0.14rem; background: var(--second); }
+.swatch-next   { width: 1.05rem; height: 1.05rem; border: 2.5px dashed var(--hour); border-radius: 50%; }
 
-/* --- The two instruction lines (a real sequence: hour first, then minutes) --- */
+/* The next hour: dashed ring on the clock face, dashed underline in the words */
+.next-ring {
+  fill: none;
+  stroke: var(--hour);
+  stroke-width: 3.5;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+
 .steps {
   list-style: none;
   display: grid;
@@ -160,7 +286,6 @@ body {
   line-height: 1.35;
 }
 .steps li { display: flex; align-items: center; gap: 0.65rem; text-wrap: pretty; }
-
 .step-num {
   flex-shrink: 0;
   width: 1.7em;
@@ -174,130 +299,652 @@ body {
 }
 .step-num.hour   { background: var(--hour); }
 .step-num.minute { background: var(--minute); }
+.word-hour   { color: var(--hour); font-weight: 800; }
+.word-minute {
+  color: #b8206a;                                          /* older browsers */
+  color: color-mix(in srgb, var(--minute) 82%, #000000);   /* darker pink, for text contrast */
+  font-weight: 800;
+}
 
-.word-hour   { color: var(--hour);   font-weight: 800; }
-.word-minute { color: #b8206a;       font-weight: 800; }  /* slightly darker pink for text contrast */
+/* Time in words: a white pill under the clock, coloured to match the hands */
+.time-words {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: min(100%, 54rem);
+  padding: 0.35rem 1.4rem;
+  border-radius: 1.6rem;
+  background: var(--paper);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.words-text {
+  font-size: clamp(1.1rem, 3.4vmin, 1.9rem);
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  text-wrap: balance;
+}
+.w-hour   { color: var(--hour); font-weight: 800; }
+.w-next-hour {
+  color: var(--hour);
+  font-weight: 800;
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: var(--hour);
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.2em;
+}
+.w-minute {
+  color: #b8206a;
+  color: color-mix(in srgb, var(--minute) 82%, #000000);
+  font-weight: 800;
+}
+.say-btn {
+  flex-shrink: 0;
+  margin-left: -1rem;                    /* sits snugly in the left end of the pill */
+  width: clamp(2.4rem, 6vmin, 3.1rem);
+  height: clamp(2.4rem, 6vmin, 3.1rem);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--hour);
+  color: #ffffff;
+}
+.say-btn svg { width: 58%; height: 58%; }
+
+/* Only appears if the JavaScript could not start (the script removes it) */
+.startup-warning {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  max-width: min(90vw, 32rem);
+  padding: 1rem 1.3rem;
+  border-radius: 14px;
+  border-left: 6px solid var(--second);
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.4;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  visibility: hidden;
+  animation: show-warning 0s linear 2s forwards;   /* wait 2 seconds before showing */
+}
+@keyframes show-warning { to { visibility: visible; } }
+html:lang(sv) .startup-warning [lang="en"],
+html:not(:lang(sv)) .startup-warning [lang="sv"] { display: none; }
 
 /* =====================================================================
-   PART A5 : SMALL SCREENS / SHORT EMBEDS
-   If the Google Sites embed box is short, drop the extras so the
-   clock stays big. The instructions are the last thing to go.
+   PART A4 : TIMER VIEW
 ===================================================================== */
+.wedge-track { fill: #efedf9; stroke: #dcd9ee; stroke-width: 2; }
+.wedge       { fill: var(--minute); }
+
+/* The control row: Reset | big time readout | Start/Pause */
+.timer-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.8rem, 3vmin, 2rem);
+}
+.timer-bar .btn {
+  min-width: clamp(6.5rem, 15vmin, 9rem);
+  padding: 0.7rem 1rem;
+  font-size: clamp(0.95rem, 2.2vmin, 1.15rem);
+  border-radius: 999px;
+}
+.readout { color: #ffffff; text-align: center; min-width: 7ch; }
+.readout-time {
+  font-size: clamp(2rem, 8vmin, 4.4rem);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.readout-status {
+  margin-top: 0.2rem;
+  font-size: clamp(0.85rem, 2.1vmin, 1.15rem);
+  font-weight: 700;
+  color: #dcdaf5;
+}
+
+/* When time is up: gentle pulse on the dial, gold status text */
+.view-timer.is-done .readout-status { color: var(--now); font-size: clamp(1rem, 2.6vmin, 1.4rem); }
+.view-timer.is-done .timer-svg { animation: pulse 1.2s ease-in-out 5; }
+@keyframes pulse { 50% { transform: scale(1.03); } }
+
+/* =====================================================================
+   PART A5 : TASK CARDS (shown under the timer)
+===================================================================== */
+.tasks { flex-shrink: 0; width: 100%; }
+.task-strip {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: max-content;      /* centre the row when it fits...          */
+  max-width: 100%;         /* ...and scroll sideways when it does not */
+  margin: 0 auto;
+  overflow-x: auto;
+  padding: 0.9rem 0.5rem 0.4rem;
+}
+.task-item { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
+.chevron { width: 1.3rem; height: 1.3rem; color: rgba(255, 255, 255, 0.6); flex-shrink: 0; }
+
+.task-card {
+  position: relative;
+  width: clamp(6.5rem, 15vmin, 10rem);
+  background: var(--paper);
+  border-radius: 16px;
+  border: 4px solid transparent;
+  padding: 0.55rem 0.45rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.task-card .tile { width: 68%; }
+.task-text {
+  font-weight: 800;
+  font-size: clamp(0.78rem, 1.9vmin, 1.05rem);
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-card.is-now { border-color: var(--now); transform: translateY(-4px); }
+.task-card.is-done { opacity: 0.45; }
+.now-tag {
+  position: absolute;
+  top: -0.85rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--now);
+  color: var(--ink);
+  font-weight: 800;
+  font-size: clamp(0.7rem, 1.6vmin, 0.85rem);
+  padding: 0.1rem 0.65rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.done-tick {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: var(--done);
+  display: grid;
+  place-items: center;
+}
+.done-tick svg { width: 70%; height: 70%; }
+
+/* Symbol tiles: a coloured square with a white drawing on it */
+.tile {
+  aspect-ratio: 1;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.tile svg { width: 80%; height: 80%; }
+
+/* =====================================================================
+   PART A6 : TEACHER PANEL (slides in from the right)
+===================================================================== */
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(29rem, 100%);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+  transform: translateX(105%);
+  visibility: hidden;                      /* hides its shadow too while closed */
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
+}
+.panel.open { transform: none; visibility: visible; transition: transform 0.25s ease, visibility 0s; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.1rem 0.6rem;
+}
+.panel-head h2 { font-size: 1.25rem; }
+
+.icon-btn {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+}
+.icon-btn svg { width: 1.2rem; height: 1.2rem; }
+
+.panel-tabs {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0 1.1rem 0.7rem;
+  border-bottom: 2px solid var(--line);
+}
+.panel-tab {
+  flex: 1;
+  padding: 0.55rem;
+  border-radius: 10px;
+  font-weight: 700;
+  background: var(--soft);
+}
+.panel-tab[aria-selected="true"] { background: var(--hour); color: #ffffff; }
+
+.panel-body { flex: 1; overflow-y: auto; padding: 0.4rem 1.1rem 1.5rem; }
+.panel-body h3 {
+  font-size: 0.95rem;
+  color: var(--muted);
+  margin: 1rem 0 0.5rem;
+}
+.hint, .empty { color: var(--muted); font-size: 0.92rem; margin-bottom: 0.6rem; }
+.empty { font-style: italic; }
+
+.presets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.45rem; }
+.preset {
+  padding: 0.65rem 0;
+  border-radius: 10px;
+  background: var(--soft);
+  font-weight: 800;
+}
+.preset.selected { background: var(--minute); color: #ffffff; }
+
+.custom { display: flex; align-items: flex-end; gap: 0.6rem; }
+.custom label { display: grid; gap: 0.25rem; font-weight: 700; font-size: 0.9rem; }
+.custom input, .editor-row input {
+  font: 600 1.05rem var(--font);
+  color: var(--ink);
+  padding: 0.45rem 0.6rem;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+.custom input { width: 5.5rem; }
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toggle input { width: 1.3rem; height: 1.3rem; accent-color: var(--minute); }
+
+.wide { width: 100%; margin-top: 1.2rem; padding: 0.85rem; font-size: 1.1rem; }
+
+.task-editor { list-style: none; display: grid; gap: 0.45rem; margin-bottom: 0.7rem; }
+.editor-row {
+  display: grid;
+  grid-template-columns: 2.6rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  border-radius: 12px;
+  background: #f6f5fc;
+}
+.editor-row .tile { width: 2.6rem; border-radius: 9px; }
+.editor-row input { width: 100%; min-width: 0; font-size: 1rem; }
+.row-btns { display: flex; gap: 0.25rem; }
+.mini {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 2px var(--line);
+  display: grid;
+  place-items: center;
+}
+.mini svg { width: 1rem; height: 1rem; }
+.mini:disabled { opacity: 0.35; cursor: default; }
+
+.library {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.3rem, 1fr));
+  gap: 0.5rem;
+}
+.lib-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.35rem;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 2px var(--line);
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  text-align: center;
+}
+.lib-card .tile { width: 3.1rem; border-radius: 10px; }
+.lib-card:hover { box-shadow: inset 0 0 0 2px var(--hour); }
+
+/* Screen-reader-only announcements */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* =====================================================================
+   PART A7 : SMALL SCREENS / SHORT EMBEDS
+===================================================================== */
+@media (max-width: 960px) {
+  /* The Timer view needs the room for its buttons; the Clock view keeps its title */
+  body[data-view="timer"] .title { display: none; }
+  body[data-view="timer"] .topbar { grid-template-columns: auto 1fr; }
+}
+@media (max-width: 640px) {
+  .title { display: none; }
+  .topbar { grid-template-columns: auto 1fr; }
+}
+@media (max-width: 600px) {
+  .action-label { display: none; }     /* header buttons show icons only */
+  .timer-bar { flex-wrap: wrap; gap: 0.5rem 0.8rem; }
+  .readout { order: -1; flex-basis: 100%; }  /* time on its own line, buttons below */
+  .timer-bar .btn { min-width: 0; }
+}
 @media (max-height: 560px) {
-  .title, .key { display: none; }
+  .key { display: none; }
+  .task-card { width: clamp(5.5rem, 13vmin, 8rem); }
 }
 @media (max-height: 380px) {
-  .guide { display: none; }
+  .guide, .tasks, .time-words { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel { transition: none; }
+  .view-timer.is-done .timer-svg, .tab-time.alert { animation: none; }
 }
 </style>
 </head>
 
 <body>
 
+<!-- Shown only if the JavaScript cannot start, for example after the code
+     was edited without updating the security fingerprints. -->
+<p class="startup-warning" id="startupWarning">
+  <span lang="en">This page could not start. Please ask whoever set it up to check the Security section of the README.</span>
+  <span lang="sv">Sidan kunde inte starta. Be den som installerade den att läsa avsnittet om säkerhet i README-filen.</span>
+</p>
+
 <!-- =====================================================================
-  PART B1 : TITLE
+  PART B1 : HEADER (view tabs, title, teacher buttons)
 ===================================================================== -->
-<h1 class="title">Lär dig klockan!</h1>
+<header class="topbar">
+  <div class="tabs" role="tablist" data-t-aria="tabsLabel">
+    <button class="tab" role="tab" id="tabClock" data-view="clock" aria-controls="viewClock" aria-selected="true">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>
+      </svg>
+      <span data-t="tabClock">Clock</span>
+    </button>
+    <button class="tab" role="tab" id="tabTimer" data-view="timer" aria-controls="viewTimer" aria-selected="false">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.4"/>
+        <path d="M12 12V5.5a6.5 6.5 0 0 1 6.5 6.5z" fill="currentColor"/>
+      </svg>
+      <span data-t="tabTimer">Timer</span>
+      <span class="tab-time" id="tabTime"></span>
+    </button>
+  </div>
+
+  <h1 class="title" id="viewTitle">Learn to Tell the Time!</h1>
+
+  <div class="actions" id="timerActions" hidden>
+    <button class="btn btn-light" id="openTimerPanel">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V10M10 2.5h4M12 2.5V6"/>
+      </svg>
+      <span class="action-label" data-t="setTimer">Set timer</span>
+    </button>
+    <button class="btn btn-light" id="openTasksPanel">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="3.4"/>
+      </svg>
+      <span class="action-label" data-t="editTasks">Edit tasks</span>
+    </button>
+  </div>
+</header>
+
+<main>
 
 <!-- =====================================================================
-  PART B2 : THE CLOCK (SVG)
-  ---------------------------------------------------------------------
-  viewBox="0 0 500 500" is our private grid: 500 x 500 units with the
-  centre at (250, 250). The browser scales that grid to fit the screen,
-  so every position below is exact on any display size.
-
-  Drawing order = stacking order (later items sit on top):
+  PART B2 : CLOCK VIEW
+  viewBox 500 x 500, centre (250, 250). Drawing order = stacking order:
     face -> ticks -> numbers -> hands -> number badges -> centre cap
 ===================================================================== -->
-<div class="clock-area">
-<svg class="clock" id="clock" viewBox="0 0 500 500" role="img" aria-labelledby="clockLabel">
-  <title id="clockLabel">Klocka</title>
+<section class="view" id="viewClock" role="tabpanel" aria-labelledby="tabClock">
+  <div class="clock-area">
+    <!-- Labelled with aria-label, not an SVG <title>: a <title> also shows as a
+         hover tooltip, which lingers over the clock when the mouse rests on it -->
+    <svg class="clock" id="clock" viewBox="0 0 500 500" role="img" aria-label="Clock">
+      <defs>
+        <filter id="clockShadow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="580" height="600">
+          <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.4"/>
+        </filter>
+        <filter id="handShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+          <feDropShadow dx="2" dy="3" stdDeviation="2" flood-color="#000000" flood-opacity="0.22"/>
+        </filter>
+        <linearGradient id="rimGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#6c6fc6"/>
+          <stop offset="100%" stop-color="#34367a"/>
+        </linearGradient>
+        <radialGradient id="faceGrad" cx="45%" cy="38%" r="70%">
+          <stop offset="0%"   stop-color="#ffffff"/>
+          <stop offset="80%"  stop-color="#f7f6fd"/>
+          <stop offset="100%" stop-color="#e8e6f6"/>
+        </radialGradient>
+      </defs>
 
-  <defs>
-    <!-- Soft shadow under the whole clock -->
-    <filter id="clockShadow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="580" height="600">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.4"/>
-    </filter>
-    <!-- Small shadow under the hands so they look raised off the face -->
-    <filter id="handShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
-      <feDropShadow dx="2" dy="3" stdDeviation="2" flood-color="#000000" flood-opacity="0.22"/>
-    </filter>
-    <!-- Rim colour: lighter at the top, darker at the bottom -->
-    <linearGradient id="rimGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#6c6fc6"/>
-      <stop offset="100%" stop-color="#34367a"/>
-    </linearGradient>
-    <!-- Face colour: a gentle curve of light, like a real dome of glass -->
-    <radialGradient id="faceGrad" cx="45%" cy="38%" r="70%">
-      <stop offset="0%"   stop-color="#ffffff"/>
-      <stop offset="80%"  stop-color="#f7f6fd"/>
-      <stop offset="100%" stop-color="#e8e6f6"/>
-    </radialGradient>
-  </defs>
+      <circle cx="250" cy="250" r="246" fill="url(#rimGrad)" filter="url(#clockShadow)"/>
+      <circle cx="250" cy="250" r="232" fill="url(#faceGrad)" stroke="#2f3170" stroke-width="2"/>
 
-  <!-- ---------- Rim + face ---------- -->
-  <circle cx="250" cy="250" r="246" fill="url(#rimGrad)" filter="url(#clockShadow)"/>
-  <circle cx="250" cy="250" r="232" fill="url(#faceGrad)" stroke="#2f3170" stroke-width="2"/>
+      <g id="ticks"></g>
+      <g id="numbers"></g>
+      <!-- Dashed ring: marks the next hour when the words name it (PART C6) -->
+      <circle id="nextHourRing" class="next-ring" cx="250" cy="250" r="28"/>
 
-  <!-- ---------- Filled in by JavaScript (PART C3) ---------- -->
-  <g id="ticks"></g>
-  <g id="numbers"></g>
+      <!-- Hands point straight up; JavaScript turns them with rotate(angle 250 250) -->
+      <g filter="url(#handShadow)">
+        <g id="hourHand">
+          <polygon class="hand-shape hour-fill" stroke-width="4"
+                   points="244,274 256,274 258,250 253.5,134 246.5,134 242,250"/>
+        </g>
+        <g id="minuteHand">
+          <polygon class="hand-shape minute-fill" stroke-width="3"
+                   points="246,282 254,282 256,250 252,44 248,44 244,250"/>
+        </g>
+      </g>
+      <g id="secondHand">
+        <line class="second-fill" x1="250" y1="292" x2="250" y2="32" stroke-width="2.5" stroke-linecap="round"/>
+        <circle class="second-fill" cx="250" cy="282" r="7"/>
+      </g>
 
-  <!-- ---------- Hands ----------
-       Each hand is drawn pointing straight up at 12 o'clock.
-       JavaScript turns it with transform="rotate(angle 250 250)",
-       which means "spin around the centre point (250, 250)".
-       The outer <g> holds the shadow so it always falls the same way. -->
-  <g filter="url(#handShadow)">
-    <g id="hourHand">
-      <polygon class="hand-shape hour-fill" stroke-width="4"
-               points="244,274 256,274 258,250 253.5,134 246.5,134 242,250"/>
-    </g>
-    <g id="minuteHand">
-      <polygon class="hand-shape minute-fill" stroke-width="3"
-               points="246,282 254,282 256,250 252,44 248,44 244,250"/>
-    </g>
-  </g>
+      <!-- Number badges never rotate, so they always read the right way up -->
+      <g id="hourBadge">
+        <rect class="badge-pill hour-fill"/>
+        <text class="badge-text" text-anchor="middle" dy="0.36em">12</text>
+      </g>
+      <g id="minuteBadge">
+        <rect class="badge-pill minute-fill"/>
+        <text class="badge-text" text-anchor="middle" dy="0.36em">00</text>
+      </g>
 
-  <g id="secondHand">
-    <line class="second-fill" x1="250" y1="292" x2="250" y2="32" stroke-width="2.5" stroke-linecap="round"/>
-    <circle class="second-fill" cx="250" cy="282" r="7"/>
-  </g>
+      <circle cx="250" cy="250" r="13" fill="#2f3170" stroke="#ffffff" stroke-width="3"/>
+      <circle cx="250" cy="250" r="4.5" class="second-fill"/>
+    </svg>
+  </div>
 
-  <!-- ---------- Number badges (sit ON TOP of every hand) ----------
-       These never rotate, so the numbers always read the right way up.
-       JavaScript slides them along their hand every second. -->
-  <g id="hourBadge">
-    <rect class="badge-pill hour-fill"/>
-    <text class="badge-text" text-anchor="middle" dy="0.36em">12</text>
-  </g>
-  <g id="minuteBadge">
-    <rect class="badge-pill minute-fill"/>
-    <text class="badge-text" text-anchor="middle" dy="0.36em">00</text>
-  </g>
+  <!-- Time in words, coloured to match the hands (filled in by PART C6) -->
+  <div class="time-words" id="timeWords">
+    <button class="say-btn" id="sayBtn" type="button" data-t-aria="sayTime" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/>
+        <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <p class="words-text" id="wordsText"></p>
+  </div>
 
-  <!-- ---------- Centre cap (covers where the hands meet) ---------- -->
-  <circle cx="250" cy="250" r="13" fill="#2f3170" stroke="#ffffff" stroke-width="3"/>
-  <circle cx="250" cy="250" r="4.5" class="second-fill"/>
-</svg>
-</div>
+  <section class="guide" data-t-aria="guideLabel">
+    <div class="key">
+      <span class="key-item"><span class="swatch swatch-hour"></span><span data-t="keyHour"></span></span>
+      <span class="key-item"><span class="swatch swatch-minute"></span><span data-t="keyMinute"></span></span>
+      <span class="key-item"><span class="swatch swatch-second"></span><span data-t="keySecond"></span></span>
+      <span class="key-item" id="keyNext" hidden><span class="swatch swatch-next"></span><span data-t="keyNext"></span></span>
+    </div>
+    <ol class="steps">
+      <li><span class="step-num hour">1</span><span data-t-html="step1"></span></li>
+      <li><span class="step-num minute">2</span><span data-t-html="step2"></span></li>
+    </ol>
+  </section>
+</section>
 
 <!-- =====================================================================
-  PART B3 : GUIDE PANEL
+  PART B3 : TIMER VIEW
+  A 60-minute dial. The pink slice is the time left: its edge points
+  at the number of minutes remaining, and it shrinks back to 0.
 ===================================================================== -->
-<section class="guide" aria-label="Så läser du klockan">
-  <div class="key">
-    <span class="key-item"><span class="swatch swatch-hour"></span>Korta visaren: timmar</span>
-    <span class="key-item"><span class="swatch swatch-minute"></span>Långa visaren: minuter</span>
-    <span class="key-item"><span class="swatch swatch-second"></span>Tunna visaren: sekunder</span>
+<section class="view view-timer" id="viewTimer" role="tabpanel" aria-labelledby="tabTimer" hidden>
+  <div class="dial-area">
+    <svg class="timer-svg" id="timerSvg" viewBox="0 0 500 500" role="img" aria-label="Visual timer">
+      <defs>
+        <!-- Own copies of the effects, so this view never depends on the hidden clock view -->
+        <filter id="tShadow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="580" height="600">
+          <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.4"/>
+        </filter>
+        <linearGradient id="tRim" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#6c6fc6"/>
+          <stop offset="100%" stop-color="#34367a"/>
+        </linearGradient>
+        <radialGradient id="tFace" cx="45%" cy="38%" r="70%">
+          <stop offset="0%"   stop-color="#ffffff"/>
+          <stop offset="80%"  stop-color="#f7f6fd"/>
+          <stop offset="100%" stop-color="#e8e6f6"/>
+        </radialGradient>
+      </defs>
+
+      <circle cx="250" cy="250" r="246" fill="url(#tRim)" filter="url(#tShadow)"/>
+      <circle cx="250" cy="250" r="232" fill="url(#tFace)" stroke="#2f3170" stroke-width="2"/>
+
+      <g id="timerTicks"></g>
+      <g id="timerNumbers"></g>
+
+      <circle class="wedge-track" cx="250" cy="250" r="152"/>
+      <path class="wedge" id="wedge"/>
+
+      <!-- The edge hand marks where the slice ends -->
+      <g id="edgeHand">
+        <line x1="250" y1="250" x2="250" y2="94" stroke="#2f3170" stroke-width="5" stroke-linecap="round"/>
+      </g>
+      <circle cx="250" cy="250" r="16" fill="#2f3170" stroke="#ffffff" stroke-width="3"/>
+      <circle cx="250" cy="250" r="5" class="minute-fill"/>
+    </svg>
   </div>
-  <ol class="steps">
-    <li><span class="step-num hour">1</span>
-        <span>Den <span class="word-hour">korta lila visaren</span> visar timmen. Läs siffran på den.</span></li>
-    <li><span class="step-num minute">2</span>
-        <span>Den <span class="word-minute">långa rosa visaren</span> visar minuterna. Räkna i femsteg från 12:an.</span></li>
-  </ol>
+
+  <div class="timer-bar">
+    <button class="btn btn-outline" id="resetBtn">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/>
+      </svg>
+      <span data-t="reset">Reset</span>
+    </button>
+
+    <div class="readout">
+      <div class="readout-time" id="readoutTime">10:00</div>
+      <div class="readout-status" id="readoutStatus"></div>
+    </div>
+
+    <button class="btn btn-primary" id="startBtn">
+      <svg viewBox="0 0 24 24" aria-hidden="true" id="startIcon"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      <span id="startLabel">Start</span>
+    </button>
+  </div>
+
+  <div class="tasks" id="tasksArea" hidden>
+    <ol class="task-strip" id="taskStrip" data-t-aria="tasksLabel"></ol>
+  </div>
 </section>
+
+</main>
+
+<!-- =====================================================================
+  PART B4 : TEACHER PANEL
+  The timer keeps running while this is open.
+===================================================================== -->
+<aside class="panel" id="panel" aria-labelledby="panelTitle" inert>
+  <div class="panel-head">
+    <h2 id="panelTitle" data-t="panelTitle">Teacher panel</h2>
+    <button class="icon-btn" id="panelClose" data-t-aria="close">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+
+  <div class="panel-tabs" role="tablist">
+    <button class="panel-tab" role="tab" id="pTabTimer" data-section="timer" aria-controls="sectionTimer" aria-selected="true" data-t="sectionTimer">Timer</button>
+    <button class="panel-tab" role="tab" id="pTabTasks" data-section="tasks" aria-controls="sectionTasks" aria-selected="false" data-t="sectionTasks">Tasks</button>
+  </div>
+
+  <div class="panel-body">
+    <!-- ---------- Timer settings ---------- -->
+    <div id="sectionTimer" role="tabpanel" aria-labelledby="pTabTimer">
+      <h3 data-t="quickPicks"></h3>
+      <div class="presets" id="presets"></div>
+
+      <h3 data-t="customTime"></h3>
+      <div class="custom">
+        <label><span data-t="minutes"></span><input id="customMin" type="number" min="0" max="60" inputmode="numeric"></label>
+        <label><span data-t="seconds"></span><input id="customSec" type="number" min="0" max="59" step="5" inputmode="numeric"></label>
+        <button class="btn btn-soft" id="customSet" data-t="set"></button>
+      </div>
+
+      <label class="toggle"><input type="checkbox" id="chimeToggle"><span data-t="chime"></span></label>
+
+      <button class="btn btn-primary wide" id="panelStart">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+        <span data-t="startTimer"></span>
+      </button>
+    </div>
+
+    <!-- ---------- Task list ---------- -->
+    <div id="sectionTasks" role="tabpanel" aria-labelledby="pTabTasks" hidden>
+      <h3 data-t="taskList"></h3>
+      <p class="hint" data-t="taskHint"></p>
+      <ol class="task-editor" id="taskEditor"></ol>
+      <p class="empty" id="taskEmpty" data-t="noTasks"></p>
+      <button class="btn btn-soft" id="clearTasks" data-t="clearAll"></button>
+
+      <h3 data-t="addTask"></h3>
+      <div class="library" id="library"></div>
+    </div>
+  </div>
+</aside>
+
+<div class="sr-only" aria-live="polite" id="announcer"></div>
 
 <!-- =====================================================================
   PART C : JAVASCRIPT
@@ -307,39 +954,233 @@ body {
   "use strict";
 
   /* ===================================================================
-     PART C1 : SETTINGS  (safe for teachers to change)
+     PART C1 : SETTINGS
+     Teachers change these in the SETTINGS block at the top of the file.
+     That block is plain data, so editing it never touches this code.
+     Every value is checked here, and anything missing or mistyped
+     quietly falls back to the default below.
   =================================================================== */
-  const SETTINGS = {
-    showSecondHand: true,       // false = hide the thin red hand
-    showNumbersOnHands: true    // false = practice mode (no number badges)
+  const DEFAULTS = {
+    showSecondHand: true,
+    showNumbersOnHands: true,
+    showTimeInWords: true,
+    showReadAloudButton: true,
+    startView: "clock",
+    defaultTimerMinutes: 10,
+    chime: true,
+    colours: { hourHand: "#4b4e9c", minuteHand: "#d6337f", secondHand: "#e63946", nowHighlight: "#ffc83d" }
   };
+  const COLOUR_VARIABLES = { hourHand: "--hour", minuteHand: "--minute", secondHand: "--second", nowHighlight: "--now" };
+
+  function readSettings() {
+    let custom = {};
+    try {
+      custom = JSON.parse(document.getElementById("settings").textContent) || {};
+    } catch (e) {
+      console.warn("The SETTINGS block could not be read, so the defaults are used. Check its quotes and commas.");
+    }
+    const result = { colours: {} };
+    Object.keys(DEFAULTS).forEach(function (key) {
+      if (key !== "colours") result[key] = typeof custom[key] === typeof DEFAULTS[key] ? custom[key] : DEFAULTS[key];
+    });
+    const colours = custom.colours && typeof custom.colours === "object" ? custom.colours : {};
+    Object.keys(DEFAULTS.colours).forEach(function (name) {
+      const value = colours[name];
+      // Only real colours are accepted, so nothing else can slip into the styles
+      const ok = typeof value === "string" && window.CSS && CSS.supports("color", value);
+      result.colours[name] = ok ? value : DEFAULTS.colours[name];
+    });
+    return result;
+  }
+  const SETTINGS = readSettings();
+  Object.keys(COLOUR_VARIABLES).forEach(function (name) {
+    document.documentElement.style.setProperty(COLOUR_VARIABLES[name], SETTINGS.colours[name]);
+  });
 
   /* ===================================================================
-     PART C2 : MEASUREMENTS  (all in SVG units, centre = 250,250)
-     The badge distances were chosen so the two badges can never
-     bump into each other or cover a number on the face, even when
-     the hands sit right on top of each other (e.g. 10:54).
+     PART C2 : WORDS  (every piece of text students or teachers see)
+     To add a language, copy the "sv" block, translate it, and set the
+     lang attribute on the <html> tag to the new code.
+  =================================================================== */
+  const TEXT = {
+    en: {
+      pageTitle: "Learn to Tell the Time",
+      tabsLabel: "Choose a view",
+      tabClock: "Clock",
+      tabTimer: "Timer",
+      titleClock: "Learn to Tell the Time!",
+      titleTimer: "Visual timer",
+      clockSpoken: "Clock showing",
+      sayTime: "Say the time",
+      guideLabel: "How to read the clock",
+      keyHour: "Short hand: hours",
+      keyMinute: "Long hand: minutes",
+      keySecond: "Thin hand: seconds",
+      keyNext: "Dashed ring: the next hour",
+      step1: 'The <span class="word-hour">short purple hand</span> shows the hour. Its number tells you the hour.',
+      step2: 'The <span class="word-minute">long pink hand</span> shows the minutes. Count in 5s from the 12 to check it.',
+      setTimer: "Set timer",
+      editTasks: "Edit tasks",
+      start: "Start",
+      pause: "Pause",
+      reset: "Reset",
+      statusReady: "Ready to start",
+      statusRunning: "Time left",
+      statusPaused: "Paused",
+      statusDone: "Time’s up!",
+      panelTitle: "Teacher panel",
+      close: "Close panel",
+      sectionTimer: "Timer",
+      sectionTasks: "Tasks",
+      quickPicks: "Quick picks",
+      minShort: "min",
+      customTime: "Custom time",
+      minutes: "Minutes",
+      seconds: "Seconds",
+      set: "Set",
+      chime: "Play a chime when time is up",
+      startTimer: "Start timer",
+      taskList: "Task list",
+      taskHint: "Tap a card below to add it. You can change the words.",
+      noTasks: "No tasks yet.",
+      clearAll: "Clear all",
+      addTask: "Add a task",
+      moveUp: "Move up",
+      moveDown: "Move down",
+      remove: "Remove",
+      taskWords: "Task words",
+      tasksLabel: "Tasks",
+      now: "Now",
+      doneWord: "done",
+      announceStart: "Timer started",
+      announceDone: "Time is up"
+    },
+    sv: {
+      pageTitle: "Lär dig klockan",
+      tabsLabel: "Välj vy",
+      tabClock: "Klocka",
+      tabTimer: "Timer",
+      titleClock: "Lär dig klockan!",
+      titleTimer: "Visuell timer",
+      clockSpoken: "Klockan är",
+      sayTime: "Läs upp tiden",
+      guideLabel: "Så läser du klockan",
+      keyHour: "Korta visaren: timmar",
+      keyMinute: "Långa visaren: minuter",
+      keySecond: "Tunna visaren: sekunder",
+      keyNext: "Streckad ring: nästa timme",
+      step1: 'Den <span class="word-hour">korta lila visaren</span> visar timmen. Läs siffran på den.',
+      step2: 'Den <span class="word-minute">långa rosa visaren</span> visar minuterna. Räkna i femsteg från 12:an.',
+      setTimer: "Ställ in timer",
+      editTasks: "Ändra uppgifter",
+      start: "Starta",
+      pause: "Pausa",
+      reset: "Börja om",
+      statusReady: "Redo att starta",
+      statusRunning: "Tid kvar",
+      statusPaused: "Pausad",
+      statusDone: "Tiden är slut!",
+      panelTitle: "Lärarpanel",
+      close: "Stäng panelen",
+      sectionTimer: "Timer",
+      sectionTasks: "Uppgifter",
+      quickPicks: "Snabbval",
+      minShort: "min",
+      customTime: "Egen tid",
+      minutes: "Minuter",
+      seconds: "Sekunder",
+      set: "Ställ in",
+      chime: "Spela en ljudsignal när tiden är slut",
+      startTimer: "Starta timern",
+      taskList: "Uppgiftslista",
+      taskHint: "Tryck på ett kort nedan för att lägga till det. Du kan ändra orden.",
+      noTasks: "Inga uppgifter än.",
+      clearAll: "Rensa allt",
+      addTask: "Lägg till en uppgift",
+      moveUp: "Flytta upp",
+      moveDown: "Flytta ner",
+      remove: "Ta bort",
+      taskWords: "Uppgiftens text",
+      tasksLabel: "Uppgifter",
+      now: "Nu",
+      doneWord: "klar",
+      announceStart: "Timern har startat",
+      announceDone: "Tiden är slut"
+    }
+  };
+
+  const LANG = (document.documentElement.lang || "en").toLowerCase().slice(0, 2);
+  const T = TEXT[LANG] || TEXT.en;
+
+  /* ===================================================================
+     PART C3 : SYMBOL SET  (premade task cards)
+     Each card has a colour, a drawing (on a 48 x 48 grid, white lines),
+     and a ready-made instruction in each language. Teachers pick a card
+     and can change the words if they want.
+  =================================================================== */
+  const SYMBOLS = [
+    { id: "read", color: "#2f6fd6", en: "Read quietly", sv: "Läs tyst",
+      art: '<path d="M24 14c-4-3-10-4-16-3v24c6-1 12 0 16 3 4-3 10-4 16-3V11c-6-1-12 0-16 3z"/><path d="M24 14v24"/>' },
+    { id: "write", color: "#6f4bc4", en: "Write in your book", sv: "Skriv i ditt häfte",
+      art: '<path d="M31 8l8 8-20 20-10 3 3-10z"/><path d="M27 12l8 8"/><path d="M27 41h13"/>' },
+    { id: "maths", color: "#c2620f", en: "Work on maths", sv: "Jobba med matte",
+      art: '<path d="M15 9v12M9 15h12"/><path d="M27 15h12"/><path d="M10.5 28.5l9 9M19.5 28.5l-9 9"/><path d="M27 30h12M27 36h12"/>' },
+    { id: "think", color: "#a06f00", en: "Think on your own", sv: "Tänk själv",
+      art: '<path d="M24 6a11 11 0 0 0-6.5 19.9c1.6 1.2 2.5 2.7 2.5 4.6V33h8v-2.5c0-1.9.9-3.4 2.5-4.6A11 11 0 0 0 24 6z"/><path d="M20 38h8M21.5 42.5h5"/>' },
+    { id: "check", color: "#2c7a33", en: "Check your work", sv: "Kolla ditt arbete",
+      art: '<circle cx="21" cy="21" r="12"/><path d="M30 30l10 10"/><path d="M15.5 21l4 4 7-7.5"/>' },
+    { id: "computer", color: "#45556b", en: "Use the computer", sv: "Jobba på datorn",
+      art: '<rect x="10" y="10" width="28" height="20" rx="2.5"/><path d="M5 36h38l-3 4H8z"/>' },
+    { id: "listen", color: "#0b7f86", en: "Listen carefully", sv: "Lyssna noga",
+      art: '<path d="M15 20a10 10 0 0 1 20 0c0 5-3 7.5-5.2 9.5-1.8 1.7-2.3 3.3-2.3 5.5a5.5 5.5 0 0 1-10.3 2.7"/><path d="M20.5 20.5a4.5 4.5 0 0 1 9 0c0 2.5-2.5 3.5-3.5 5"/>' },
+    { id: "partner", color: "#c42f75", en: "Talk with a partner", sv: "Prata med en kompis",
+      art: '<path d="M8 8h18a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H15l-5 5v-5H8a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z"/><path d="M33 17h7a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-2v5l-5-5h-9a3 3 0 0 1-3-3v-2"/>' },
+    { id: "group", color: "#8e3db5", en: "Work in your group", sv: "Jobba i din grupp",
+      art: '<circle cx="24" cy="15" r="5.5"/><path d="M13.5 40c0-6.5 4.7-11.5 10.5-11.5S34.5 33.5 34.5 40"/><circle cx="10.5" cy="20" r="4"/><path d="M3.5 37c0-5 3-8.5 7-8.5 1.6 0 3 .5 4.2 1.4"/><circle cx="37.5" cy="20" r="4"/><path d="M44.5 37c0-5-3-8.5-7-8.5-1.6 0-3 .5-4.2 1.4"/>' },
+    { id: "help", color: "#1a6fb5", en: "Ask for help", sv: "Be om hjälp",
+      art: '<path d="M10 8h28a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3H22l-7 7v-7h-5a3 3 0 0 1-3-3V11a3 3 0 0 1 3-3z"/><path d="M19.5 16.5a4.5 4.5 0 1 1 6.6 4c-1.3.7-2.1 1.6-2.1 3"/><circle cx="24" cy="27.5" r="1.8" fill="#fff" stroke="none"/>' },
+    { id: "quiet", color: "#4b4e9c", en: "Silent work", sv: "Tyst arbete",
+      art: '<path d="M8 19h7l9-7.5v25L15 29H8z"/><path d="M31 19l10 10M41 19L31 29"/>' },
+    { id: "draw", color: "#cf4a25", en: "Draw and colour", sv: "Rita och måla",
+      art: '<path d="M24 7C14 7 6.5 14.5 6.5 24S13 41 21 41c3 0 4.5-2 4.5-4.2 0-3 2-4.8 5-4.8h3.5c5.5 0 9-3.4 9-8.5C43 14 34.5 7 24 7z"/><circle cx="15.5" cy="20" r="2.6" fill="#fff" stroke="none"/><circle cx="23.5" cy="14.5" r="2.6" fill="#fff" stroke="none"/><circle cx="32" cy="18" r="2.6" fill="#fff" stroke="none"/><circle cx="15" cy="29" r="2.6" fill="#fff" stroke="none"/>' },
+    { id: "move", color: "#6b7a12", en: "Move your body", sv: "Rör på dig",
+      art: '<circle cx="24" cy="9" r="4.5"/><path d="M24 15v13"/><path d="M11 11l13 8 13-8"/><path d="M24 28l-9 13M24 28l9 13"/>' },
+    { id: "play", color: "#3a8a1f", en: "Break time", sv: "Rast",
+      art: '<circle cx="24" cy="24" r="16"/><path d="M12 13.5c5 4.5 5 16.5 0 21"/><path d="M36 13.5c-5 4.5-5 16.5 0 21"/>' },
+    { id: "snack", color: "#c0392b", en: "Snack time", sv: "Fruktstund",
+      art: '<path d="M24 16c-3-2-9-3-12.5 1.5-4 5-2 14 2 19 3 3.8 6.5 5 10.5 3 4 2 7.5.8 10.5-3 4-5 6-14 2-19C33 13 27 14 24 16z"/><path d="M24 16c0-3 .8-6 3-8.5"/><path d="M27.5 11.5c2.8-3 7-3.4 9.5-1.3-2.2 3.2-6.5 3.5-9.5 1.3z"/>' },
+    { id: "tidy", color: "#7a5340", en: "Tidy up", sv: "Plocka undan",
+      art: '<path d="M36 5L25 24"/><path d="M19 23l12 7-4.5 11H8.5z"/><path d="M13 41l3.5-8M18.5 41l2.5-7M24 41l1.5-6"/>' }
+  ];
+  const SYMBOL_BY_ID = {};
+  SYMBOLS.forEach(function (s) { SYMBOL_BY_ID[s.id] = s; });
+
+  /* ===================================================================
+     PART C4 : HELPERS
   =================================================================== */
   const CX = 250, CY = 250;
-
-  const TICK_OUTER        = 224;
-  const TICK_MINOR_INNER  = 213;
-  const TICK_MAJOR_INNER  = 203;
-
-  const NUMBER_RADIUS     = 173;   // where 1-12 sit
-  const NUMBER_SIZE       = 36;
-  const NUMBER_SIZE_BIG   = 40;    // 12, 3, 6 and 9 are a little larger
-
-  const BADGES = {
-    hour:   { radius: 40,  fontSize: 26, padX: 9, padY: 6 },
-    minute: { radius: 108, fontSize: 22, padX: 8, padY: 5 }
-  };
-  const DIGIT_WIDTH = 0.58;        // one digit is about 0.58 x the font size wide
-
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const $ = function (id) { return document.getElementById(id); };
 
-  /* Turn "distance from centre + angle" into an (x, y) point.
-     Angle 0 = straight up (12 o'clock), increasing clockwise. */
+  /* ---------- Security: the only doorway for writing markup ----------
+     The Content-Security-Policy switches on "Trusted Types", so the
+     browser refuses to turn plain text into page code. Markup has to
+     pass through this one checked doorway. Only fixed markup written in
+     this file comes through here; words typed by teachers are always
+     added as plain text instead, so they can never become code. */
+  function checkMarkup(html) {
+    if (/<\s*(script|iframe|object|embed|link|meta|style|form)\b|\son[a-z]+\s*=|javascript:/i.test(html)) {
+      throw new TypeError("Blocked unsafe markup");
+    }
+    return html;
+  }
+  const markupPolicy = window.trustedTypes && window.trustedTypes.createPolicy
+    ? window.trustedTypes.createPolicy("classroom", { createHTML: checkMarkup })
+    : { createHTML: checkMarkup };           // browsers without Trusted Types still get the check
+  function trusted(html) { return markupPolicy.createHTML(html); }
+  function setMarkup(el, html) { el.innerHTML = trusted(html); }
+
+  // Distance from centre + angle (0 = 12 o'clock, clockwise) -> (x, y)
   function pointAt(radius, angleDeg) {
     const rad = (angleDeg - 90) * Math.PI / 180;
     return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) };
@@ -351,131 +1192,816 @@ body {
     return node;
   }
 
-  /* ===================================================================
-     PART C3 : BUILD THE FACE  (runs once)
-  =================================================================== */
-  // 60 tick marks: one per minute, a longer one every 5 minutes
-  const ticks = document.getElementById("ticks");
-  for (let i = 0; i < 60; i++) {
-    const isMajor = i % 5 === 0;
-    const outer = pointAt(TICK_OUTER, i * 6);
-    const inner = pointAt(isMajor ? TICK_MAJOR_INNER : TICK_MINOR_INNER, i * 6);
-    ticks.appendChild(makeSvg("line", {
-      x1: outer.x, y1: outer.y, x2: inner.x, y2: inner.y,
-      stroke: isMajor ? "var(--tick-major)" : "var(--tick-minor)",
-      "stroke-width": isMajor ? 4.5 : 2,
-      "stroke-linecap": "round"
-    }));
+  function makeEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
   }
 
-  // The numbers 1 to 12, spaced 30 degrees apart
-  const numbers = document.getElementById("numbers");
-  for (let n = 1; n <= 12; n++) {
-    const p = pointAt(NUMBER_RADIUS, n * 30);
-    const label = makeSvg("text", {
-      x: p.x, y: p.y, dy: "0.36em",           // dy centres digits vertically
-      "text-anchor": "middle",
-      "font-size": n % 3 === 0 ? NUMBER_SIZE_BIG : NUMBER_SIZE,
-      class: "face-number"
-    });
-    label.textContent = n;
-    numbers.appendChild(label);
+  // Small reusable icons (built from our own markup only)
+  const ICONS = {
+    play:  '<path d="M8 5v14l11-7z" fill="currentColor"/>',
+    pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/>',
+    up:    '<path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>',
+    down:  '<path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>',
+    cross: '<path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>',
+    tick:  '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    chevron: '<path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
+  };
+  function icon(name, className) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"' + (className ? ' class="' + className + '"' : "") + ">" + ICONS[name] + "</svg>";
   }
 
-  /* ===================================================================
-     PART C4 : GRAB THE MOVING PARTS  (once, so updates are fast)
-  =================================================================== */
-  const hourHand    = document.getElementById("hourHand");
-  const minuteHand  = document.getElementById("minuteHand");
-  const secondHand  = document.getElementById("secondHand");
-  const hourBadge   = document.getElementById("hourBadge");
-  const minuteBadge = document.getElementById("minuteBadge");
-  const clockLabel  = document.getElementById("clockLabel");
-
-  if (!SETTINGS.showSecondHand)     secondHand.style.display = "none";
-  if (!SETTINGS.showNumbersOnHands) {
-    hourBadge.style.display = "none";
-    minuteBadge.style.display = "none";
+  // A coloured tile with a white symbol drawing on it
+  function makeTile(symbol) {
+    const tile = makeEl("div", "tile");
+    tile.style.background = symbol.color;
+    setMarkup(tile, '<svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">' + symbol.art + "</svg>");
+    return tile;
   }
 
-  // Badge text sizes are set here so the pill maths below always matches
-  hourBadge.querySelector("text").setAttribute("font-size", BADGES.hour.fontSize);
-  minuteBadge.querySelector("text").setAttribute("font-size", BADGES.minute.fontSize);
+  function announce(message) {
+    const box = $("announcer");
+    box.textContent = "";
+    setTimeout(function () { box.textContent = message; }, 50);
+  }
 
-  /* Place a badge on its hand and size its pill to fit the digits.
-     The pill size is worked out from the number of digits, so it is
-     correct immediately - no waiting for fonts, no measuring. */
-  function placeBadge(badge, settings, text, angleDeg) {
-    const height = settings.fontSize + settings.padY * 2;
-    const width  = Math.max(height,  // never narrower than tall, so "3" sits in a circle
-                            text.length * settings.fontSize * DIGIT_WIDTH + settings.padX * 2);
-    const spot   = pointAt(settings.radius, angleDeg);
-
-    const pill = badge.querySelector("rect");
-    pill.setAttribute("x", -width / 2);
-    pill.setAttribute("y", -height / 2);
-    pill.setAttribute("width", width);
-    pill.setAttribute("height", height);
-    pill.setAttribute("rx", height / 2);
-
-    badge.querySelector("text").textContent = text;
-    badge.setAttribute("transform", "translate(" + spot.x + " " + spot.y + ")");
+  function formatTime(totalSeconds) {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return m + ":" + String(s).padStart(2, "0");
   }
 
   /* ===================================================================
-     PART C5 : DRAW THE TIME
-     Every hand travels 360 degrees:
-       second hand: 60 seconds per lap -> 6 degrees per second
-       minute hand: 60 minutes per lap -> 6 degrees per minute
-                    (+0.1 degree per second so it glides)
-       hour hand:   12 hours per lap   -> 30 degrees per hour
-                    (+0.5 degree per minute so it creeps between numbers)
+     PART C5 : FILL IN THE WORDS
   =================================================================== */
-  let lastSpoken = "";
+  document.title = T.pageTitle;
+  document.querySelectorAll("[data-t]").forEach(function (el) { el.textContent = T[el.dataset.t]; });
+  document.querySelectorAll("[data-t-html]").forEach(function (el) { setMarkup(el, T[el.dataset.tHtml]); });
+  document.querySelectorAll("[data-t-aria]").forEach(function (el) { el.setAttribute("aria-label", T[el.dataset.tAria]); });
+  $("timerSvg").setAttribute("aria-label", T.titleTimer);
 
-  function drawTime(now) {
-    const h = now.getHours();
-    const m = now.getMinutes();
-    const s = now.getSeconds();
-    const hour12 = h % 12 || 12;              // 0 -> 12, 13 -> 1, etc.
+  /* ===================================================================
+     PART C6 : TIME IN WORDS
+     Turns the time into the words children say, in coloured pieces that
+     match the hands: pink for the minutes part, purple for the hour.
+     Each language follows its own rules, for example at 3:30:
+       English  "half past three"   (half an hour PAST three)
+       Swedish  "halv fyra"         (half way TO four)
+     When the words name the NEXT hour ("quarter to eight" while the hour
+     hand has only passed 7), that hour is marked "next-hour": it gets a
+     dashed underline, and a matching dashed ring circles that number on
+     the clock face. Solid purple = the hour we are in. Dashed purple =
+     the hour we are heading to.
+     A language without rules here simply hides the line.
+  =================================================================== */
+  const NUMBER_WORDS = {
+    en: ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+         "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+         "nineteen", "twenty", "twenty-one", "twenty-two", "twenty-three", "twenty-four",
+         "twenty-five", "twenty-six", "twenty-seven", "twenty-eight", "twenty-nine"],
+    sv: ["", "ett", "två", "tre", "fyra", "fem", "sex", "sju", "åtta", "nio", "tio",
+         "elva", "tolv", "tretton", "fjorton", "femton", "sexton", "sjutton", "arton",
+         "nitton", "tjugo"]
+  };
 
-    const secondAngle = s * 6;
-    const minuteAngle = m * 6 + s * 0.1;
-    const hourAngle   = (h % 12) * 30 + m * 0.5 + s * (0.5 / 60);
-
-    hourHand.setAttribute("transform",   "rotate(" + hourAngle   + " 250 250)");
-    minuteHand.setAttribute("transform", "rotate(" + minuteAngle + " 250 250)");
-    secondHand.setAttribute("transform", "rotate(" + secondAngle + " 250 250)");
-
-    const minuteText = String(m).padStart(2, "0");
-    placeBadge(hourBadge,   BADGES.hour,   String(hour12), hourAngle);
-    placeBadge(minuteBadge, BADGES.minute, minuteText,     minuteAngle);
-
-    // Screen readers hear the time once per minute, not every second
-    const spoken = "Klockan är " + hour12 + ":" + minuteText;   // read aloud by screen readers
-    if (spoken !== lastSpoken) {
-      clockLabel.textContent = spoken;
-      lastSpoken = spoken;
+  // Each rule gets the hour (1-12), the next hour, and the minutes (0-59),
+  // and returns pieces: { text, part } where part is "lead", "minute",
+  // "hour" (the hour we are in) or "next-hour" (the hour we are heading to).
+  const WORD_RULES = {
+    en: function (hour, nextHour, m) {
+      const n = NUMBER_WORDS.en;
+      const lead = { text: "It’s", part: "lead" };
+      function mins(x) { return x % 5 === 0 ? n[x] : n[x] + (x === 1 ? " minute" : " minutes"); }
+      if (m === 0)  return [lead, { text: n[hour], part: "hour" }, { text: "o’clock", part: "minute" }];
+      if (m === 15) return [lead, { text: "quarter past", part: "minute" }, { text: n[hour], part: "hour" }];
+      if (m === 30) return [lead, { text: "half past", part: "minute" }, { text: n[hour], part: "hour" }];
+      if (m === 45) return [lead, { text: "quarter to", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
+      if (m < 30)   return [lead, { text: mins(m) + " past", part: "minute" }, { text: n[hour], part: "hour" }];
+      return [lead, { text: mins(60 - m) + " to", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
+    },
+    sv: function (hour, nextHour, m) {
+      const n = NUMBER_WORDS.sv;
+      const lead = { text: "Klockan är", part: "lead" };
+      function mins(x) {
+        if (x === 15) return "kvart";
+        if (x % 5 === 0) return n[x];
+        return x === 1 ? "en minut" : n[x] + " minuter";   // "en minut", but "klockan är ett"
+      }
+      if (m === 0)  return [lead, { text: n[hour], part: "hour" }];
+      if (m <= 20)  return [lead, { text: mins(m) + " över", part: "minute" }, { text: n[hour], part: "hour" }];
+      if (m < 30)   return [lead, { text: mins(30 - m) + " i halv", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
+      if (m === 30) return [lead, { text: "halv", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
+      if (m < 40)   return [lead, { text: mins(m - 30) + " över halv", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
+      return [lead, { text: mins(60 - m) + " i", part: "minute" }, { text: n[nextHour], part: "next-hour" }];
     }
+  };
+  const wordRule = WORD_RULES[LANG];
+
+  const timeWords = $("timeWords"), wordsText = $("wordsText"), sayBtn = $("sayBtn");
+  let spokenSentence = "";
+  if (!SETTINGS.showTimeInWords || !wordRule) timeWords.hidden = true;
+
+  // Returns true when the words name the next hour, so the clock can ring it
+  function showTimeInWords(h24, m) {
+    if (timeWords.hidden) return false;
+    const hour = h24 % 12 || 12;
+    const pieces = wordRule(hour, hour % 12 + 1, m);
+    wordsText.replaceChildren();
+    pieces.forEach(function (piece, i) {
+      if (i > 0) wordsText.appendChild(document.createTextNode(" "));
+      wordsText.appendChild(makeEl("span", "w-" + piece.part, piece.text));
+    });
+    spokenSentence = pieces.map(function (p) { return p.text; }).join(" ").replace(/’/g, "'") + ".";
+    return pieces.some(function (p) { return p.part === "next-hour"; });
   }
 
-  /* ===================================================================
-     PART C6 : KEEP TIME
-     Instead of "repeat every 1000 ms" (which slowly drifts), each tick
-     waits until the start of the next real second. If a Chromebook
-     sleeps or the tab is hidden, the clock snaps to the right time
-     the moment it is visible again.
-  =================================================================== */
-  function tick() {
-    drawTime(new Date());
-    setTimeout(tick, 1000 - (Date.now() % 1000) + 10);
+  /* Read aloud, using the voices built into the device. Voices that run
+     on the device itself are preferred. If the only voice for this
+     language is an online one, the browser sends just the time phrase
+     (never anything typed) to its voice service. No voice for this
+     language means no button, rather than the wrong accent. */
+  const speech = window.speechSynthesis;
+  let voice = null;
+  function langOf(v) { return (v.lang || "").toLowerCase().replace("_", "-"); }
+  function pickVoice() {
+    const preferred = LANG === "en" ? "en-gb" : LANG;     // UK wording reads best in a UK voice
+    const voices = speech.getVoices().filter(function (v) { return langOf(v).indexOf(LANG) === 0; });
+    voice = voices.find(function (v) { return v.localService && langOf(v).indexOf(preferred) === 0; })
+         || voices.find(function (v) { return v.localService; })
+         || voices.find(function (v) { return langOf(v).indexOf(preferred) === 0; })
+         || voices[0] || null;
+    sayBtn.hidden = !voice || !SETTINGS.showReadAloudButton || timeWords.hidden;
   }
-
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) drawTime(new Date());
+  if (speech && window.SpeechSynthesisUtterance) {
+    pickVoice();
+    if (speech.addEventListener) speech.addEventListener("voiceschanged", pickVoice);
+  }
+  sayBtn.addEventListener("click", function () {
+    if (!voice || !spokenSentence) return;
+    speech.cancel();
+    const utterance = new SpeechSynthesisUtterance(spokenSentence);
+    utterance.voice = voice;
+    utterance.lang = voice.lang;
+    utterance.rate = 0.9;
+    speech.speak(utterance);
   });
 
-  tick();
+  /* ===================================================================
+     PART C7 : THE TEACHING CLOCK
+     (unchanged from version 1, tested at every minute of 12 hours)
+  =================================================================== */
+  const clock = (function () {
+    const TICK_OUTER = 224, TICK_MINOR_INNER = 213, TICK_MAJOR_INNER = 203;
+    const NUMBER_RADIUS = 173, NUMBER_SIZE = 36, NUMBER_SIZE_BIG = 40;
+    const BADGES = {
+      hour:   { radius: 40,  fontSize: 26, padX: 9, padY: 6 },
+      minute: { radius: 108, fontSize: 22, padX: 8, padY: 5 }
+    };
+    const DIGIT_WIDTH = 0.58;
+
+    // 60 tick marks, longer every 5 minutes
+    const ticks = $("ticks");
+    for (let i = 0; i < 60; i++) {
+      const isMajor = i % 5 === 0;
+      const outer = pointAt(TICK_OUTER, i * 6);
+      const inner = pointAt(isMajor ? TICK_MAJOR_INNER : TICK_MINOR_INNER, i * 6);
+      ticks.appendChild(makeSvg("line", {
+        x1: outer.x, y1: outer.y, x2: inner.x, y2: inner.y,
+        stroke: isMajor ? "var(--tick-major)" : "var(--tick-minor)",
+        "stroke-width": isMajor ? 4.5 : 2,
+        "stroke-linecap": "round"
+      }));
+    }
+
+    // Numbers 1 to 12
+    const numbers = $("numbers");
+    for (let n = 1; n <= 12; n++) {
+      const p = pointAt(NUMBER_RADIUS, n * 30);
+      const label = makeSvg("text", {
+        x: p.x, y: p.y, dy: "0.36em", "text-anchor": "middle",
+        "font-size": n % 3 === 0 ? NUMBER_SIZE_BIG : NUMBER_SIZE,
+        class: "face-number"
+      });
+      label.textContent = n;
+      numbers.appendChild(label);
+    }
+
+    const hourHand = $("hourHand"), minuteHand = $("minuteHand"), secondHand = $("secondHand");
+    const nextHourRing = $("nextHourRing"), keyNext = $("keyNext");
+
+    // Ring the number the words are heading to (0 = no ring)
+    function showNextHour(hourNumber) {
+      if (hourNumber) {
+        const spot = pointAt(NUMBER_RADIUS, hourNumber * 30);
+        nextHourRing.setAttribute("cx", spot.x);
+        nextHourRing.setAttribute("cy", spot.y);
+      }
+      nextHourRing.style.display = hourNumber ? "" : "none";
+      keyNext.hidden = !hourNumber;
+    }
+    const hourBadge = $("hourBadge"), minuteBadge = $("minuteBadge"), clockSvg = $("clock");
+
+    if (!SETTINGS.showSecondHand) secondHand.style.display = "none";
+    if (!SETTINGS.showNumbersOnHands) {
+      hourBadge.style.display = "none";
+      minuteBadge.style.display = "none";
+    }
+    hourBadge.querySelector("text").setAttribute("font-size", BADGES.hour.fontSize);
+    minuteBadge.querySelector("text").setAttribute("font-size", BADGES.minute.fontSize);
+
+    // Size the pill from the number of digits (no waiting for fonts)
+    function placeBadge(badge, b, text, angleDeg) {
+      const height = b.fontSize + b.padY * 2;
+      const width = Math.max(height, text.length * b.fontSize * DIGIT_WIDTH + b.padX * 2);
+      const spot = pointAt(b.radius, angleDeg);
+      const pill = badge.querySelector("rect");
+      pill.setAttribute("x", -width / 2);
+      pill.setAttribute("y", -height / 2);
+      pill.setAttribute("width", width);
+      pill.setAttribute("height", height);
+      pill.setAttribute("rx", height / 2);
+      badge.querySelector("text").textContent = text;
+      badge.setAttribute("transform", "translate(" + spot.x + " " + spot.y + ")");
+    }
+
+    let lastSpoken = "";
+
+    // second: 6 deg per second | minute: 6 deg per minute (+0.1 per second)
+    // hour: 30 deg per hour (+0.5 per minute)
+    function draw(now) {
+      const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+      const hour12 = h % 12 || 12;
+      const secondAngle = s * 6;
+      const minuteAngle = m * 6 + s * 0.1;
+      const hourAngle = (h % 12) * 30 + m * 0.5 + s * (0.5 / 60);
+
+      hourHand.setAttribute("transform", "rotate(" + hourAngle + " 250 250)");
+      minuteHand.setAttribute("transform", "rotate(" + minuteAngle + " 250 250)");
+      secondHand.setAttribute("transform", "rotate(" + secondAngle + " 250 250)");
+
+      const minuteText = String(m).padStart(2, "0");
+      placeBadge(hourBadge, BADGES.hour, String(hour12), hourAngle);
+      placeBadge(minuteBadge, BADGES.minute, minuteText, minuteAngle);
+
+      const spoken = T.clockSpoken + " " + hour12 + ":" + minuteText;
+      if (spoken !== lastSpoken) {           // these only change once a minute
+        clockSvg.setAttribute("aria-label", spoken);
+        lastSpoken = spoken;
+        const headingToNext = showTimeInWords(h, m);
+        showNextHour(headingToNext ? hour12 % 12 + 1 : 0);
+      }
+    }
+
+    // Each tick waits for the start of the next real second, so it never drifts
+    function tick() {
+      draw(new Date());
+      setTimeout(tick, 1000 - (Date.now() % 1000) + 10);
+    }
+
+    return { draw: draw, start: tick };
+  })();
+
+  /* ===================================================================
+     PART C8 : THE VISUAL TIMER
+     The time left is kept as an end time ("finish at 10:42:07"), not
+     by counting down one by one. That way it stays exact even if the
+     Chromebook is slow or the tab is hidden for a while.
+  =================================================================== */
+  const MAX_MS = 60 * 60 * 1000;            // the dial shows up to 60 minutes
+  const WEDGE_RADIUS = 152;
+  const PRESET_MINUTES = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+
+  // Keep any time inside the dial, even if a setting is mistyped
+  function safeDuration(ms) {
+    return Number.isFinite(ms) ? Math.min(MAX_MS, Math.max(1000, ms)) : 10 * 60000;
+  }
+  const START_MS = safeDuration(SETTINGS.defaultTimerMinutes * 60000);
+
+  const timer = {
+    totalMs: START_MS,
+    remainingMs: START_MS,
+    endAt: 0,
+    state: "ready"                           // ready | running | paused | done
+  };
+  let chimeOn = SETTINGS.chime;
+  let currentView = "clock";                 // which tab is showing (see PART C11)
+
+  // Build the dial face once: 60 ticks and the numbers 0, 5, 10 ... 55
+  (function buildDial() {
+    const ticks = $("timerTicks");
+    for (let i = 0; i < 60; i++) {
+      const isMajor = i % 5 === 0;
+      const outer = pointAt(226, i * 6);
+      const inner = pointAt(isMajor ? 206 : 215, i * 6);
+      ticks.appendChild(makeSvg("line", {
+        x1: outer.x, y1: outer.y, x2: inner.x, y2: inner.y,
+        stroke: isMajor ? "var(--tick-major)" : "var(--tick-minor)",
+        "stroke-width": isMajor ? 4.5 : 2,
+        "stroke-linecap": "round"
+      }));
+    }
+    const numbers = $("timerNumbers");
+    for (let m = 0; m < 60; m += 5) {
+      const p = pointAt(180, m * 6);
+      const label = makeSvg("text", {
+        x: p.x, y: p.y, dy: "0.36em", "text-anchor": "middle",
+        "font-size": m % 15 === 0 ? 32 : 28,
+        class: "face-number"
+      });
+      label.textContent = m;
+      numbers.appendChild(label);
+    }
+  })();
+
+  // The pink slice: from 12 o'clock, clockwise, as far as the minutes left
+  function wedgePath(angleDeg) {
+    const R = WEDGE_RADIUS;
+    if (angleDeg <= 0.05) return "";
+    if (angleDeg >= 359.95) {                // a full circle needs two half arcs
+      return "M " + CX + " " + (CY - R) +
+             " A " + R + " " + R + " 0 1 1 " + CX + " " + (CY + R) +
+             " A " + R + " " + R + " 0 1 1 " + CX + " " + (CY - R) + " Z";
+    }
+    const end = pointAt(R, angleDeg);
+    const largeArc = angleDeg > 180 ? 1 : 0;
+    return "M " + CX + " " + CY + " L " + CX + " " + (CY - R) +
+           " A " + R + " " + R + " 0 " + largeArc + " 1 " + end.x + " " + end.y + " Z";
+  }
+
+  // ---------- Chime: three soft notes made by the browser, no sound files ----------
+  let audioCtx = null;
+  function unlockAudio() {           // browsers only allow sound after a click
+    try {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) audioCtx = new AC();
+      }
+      if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) { /* no sound available: the visual alert still works */ }
+  }
+  function playChime() {
+    if (!chimeOn || !audioCtx) return;
+    try {
+      const notes = [784, 988, 1175];        // G, B, D: a friendly major chord
+      for (let round = 0; round < 2; round++) {
+        notes.forEach(function (freq, i) {
+          const t = audioCtx.currentTime + 0.05 + round * 1.6 + i * 0.28;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(t);
+          osc.stop(t + 1.4);
+        });
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // ---------- Keep the screen awake while the timer runs ----------
+  // Without this, a classroom screen can dim or sleep mid-countdown.
+  // Where the browser does not allow it (for example some embeds), nothing happens.
+  let wakeLock = null, wakeBusy = false, wantAwake = false;
+  async function syncWakeLock() {
+    if (wakeBusy || !("wakeLock" in navigator)) return;
+    wakeBusy = true;
+    const wanted = wantAwake;
+    try {
+      if (wanted && !wakeLock && document.visibilityState === "visible") {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", function () { wakeLock = null; });
+      } else if (!wanted && wakeLock) {
+        const lock = wakeLock;
+        wakeLock = null;
+        await lock.release();
+      }
+    } catch (e) { wakeLock = null; }
+    wakeBusy = false;
+    if (wantAwake !== wanted) syncWakeLock();   // the wish changed while we were busy
+  }
+  function keepAwake(on) { wantAwake = on; syncWakeLock(); }
+
+  // ---------- A one-off "finish" alarm ----------
+  // Browsers slow repeating timers right down in background tabs. A single
+  // timer set for the exact finish time, started by the teacher's click, is
+  // slowed far less, so the chime still comes on time if the teacher has
+  // switched to another tab.
+  let finishAlarm = 0;
+  function setFinishAlarm(on) {
+    clearTimeout(finishAlarm);
+    if (on) finishAlarm = setTimeout(timerLoop, timer.remainingMs + 30);
+  }
+
+  // ---------- Timer actions ----------
+  function setDuration(ms) {
+    timer.totalMs = safeDuration(ms);
+    timer.remainingMs = timer.totalMs;
+    timer.endAt = 0;
+    timer.state = "ready";
+    setFinishAlarm(false);
+    keepAwake(false);
+    markPreset();
+    renderTimer();
+  }
+  function startTimer() {
+    unlockAudio();
+    if (timer.state === "running") return;
+    if (timer.state === "done") timer.remainingMs = timer.totalMs;
+    timer.endAt = Date.now() + timer.remainingMs;
+    timer.state = "running";
+    setFinishAlarm(true);
+    keepAwake(true);
+    announce(T.announceStart);
+    renderTimer();
+  }
+  function pauseTimer() {
+    if (timer.state !== "running") return;
+    timer.remainingMs = Math.max(0, timer.endAt - Date.now());
+    timer.state = "paused";
+    setFinishAlarm(false);
+    keepAwake(false);
+    renderTimer();
+  }
+  function resetTimer() {
+    timer.remainingMs = timer.totalMs;
+    timer.state = "ready";
+    setFinishAlarm(false);
+    keepAwake(false);
+    renderTimer();
+  }
+  function finishTimer() {
+    timer.remainingMs = 0;
+    timer.state = "done";
+    setFinishAlarm(false);
+    keepAwake(false);
+    playChime();
+    announce(T.announceDone);
+  }
+
+  // ---------- Draw everything the timer shows ----------
+  const wedge = $("wedge"), edgeHand = $("edgeHand");
+  const readoutTime = $("readoutTime"), readoutStatus = $("readoutStatus");
+  const startIcon = $("startIcon"), startLabel = $("startLabel");
+  const tabTime = $("tabTime"), viewTimer = $("viewTimer");
+
+  // This runs 5 times a second, so it only touches the page when something
+  // has actually changed. That keeps slower Chromebooks smooth.
+  const shown = {};
+  function update(key, value, apply) {
+    if (shown[key] === value) return;
+    shown[key] = value;
+    apply(value);
+  }
+
+  function renderTimer() {
+    const secondsLeft = Math.ceil(timer.remainingMs / 1000);
+    const angle = Math.round((timer.remainingMs / 60000) * 6 * 100) / 100;   // 6 degrees per minute
+    const running = timer.state === "running";
+    const statusWords = { ready: T.statusReady, running: T.statusRunning, paused: T.statusPaused, done: T.statusDone };
+    const showOnTab = currentView !== "timer" && timer.state !== "ready";
+
+    update("angle", angle, function (a) {
+      wedge.setAttribute("d", wedgePath(a));
+      edgeHand.setAttribute("transform", "rotate(" + a + " 250 250)");
+    });
+    update("time", formatTime(secondsLeft), function (t) { readoutTime.textContent = t; });
+    update("state", timer.state, function (st) {
+      readoutStatus.textContent = statusWords[st];
+      viewTimer.classList.toggle("is-done", st === "done");
+    });
+    update("running", running, function (r) {
+      setMarkup(startIcon, r ? ICONS.pause : ICONS.play);
+      startLabel.textContent = r ? T.pause : T.start;
+    });
+    // Show the countdown on the Timer tab while the Clock view is open
+    update("tab", showOnTab ? formatTime(secondsLeft) : "", function (t) { tabTime.textContent = t; });
+    update("tabAlert", showOnTab && timer.state === "done", function (on) { tabTime.classList.toggle("alert", on); });
+  }
+
+  function timerLoop() {
+    if (timer.state === "running") {
+      timer.remainingMs = Math.max(0, timer.endAt - Date.now());
+      if (timer.remainingMs === 0) finishTimer();
+    }
+    renderTimer();
+  }
+
+  $("startBtn").addEventListener("click", function () {
+    if (timer.state === "running") pauseTimer(); else startTimer();
+  });
+  $("resetBtn").addEventListener("click", resetTimer);
+
+  /* ===================================================================
+     PART C9 : TASK CARDS
+     Tap a card under the timer to tick it off. The first unticked
+     card is highlighted as "Now". Nothing is saved: every session
+     starts fresh.
+  =================================================================== */
+  let tasks = [];
+  let nextTaskId = 1;
+
+  const taskStrip = $("taskStrip"), tasksArea = $("tasksArea");
+  const taskEditor = $("taskEditor"), taskEmpty = $("taskEmpty");
+
+  function defaultWords(symbolId) {
+    const symbol = SYMBOL_BY_ID[symbolId];
+    return symbol[LANG] || symbol.en;
+  }
+  // If a teacher deletes all the words, the card falls back to its ready-made instruction
+  function shownWords(task) { return task.text.trim() || defaultWords(task.symbol); }
+
+  function addTask(symbolId) {
+    tasks.push({ id: nextTaskId++, symbol: symbolId, text: defaultWords(symbolId), done: false });
+    renderStrip();
+    renderEditor();
+  }
+
+  // ---------- Student view: the row of big cards ----------
+  function renderStrip() {
+    tasksArea.hidden = tasks.length === 0;
+    taskStrip.replaceChildren();
+    const nowIndex = tasks.findIndex(function (t) { return !t.done; });
+
+    tasks.forEach(function (task, i) {
+      const item = makeEl("li", "task-item");
+      if (i > 0) item.insertAdjacentHTML("beforeend", trusted(icon("chevron", "chevron")));
+
+      const card = makeEl("button", "task-card");
+      card.type = "button";
+      card.appendChild(makeTile(SYMBOL_BY_ID[task.symbol]));
+      const words = shownWords(task);
+      card.appendChild(makeEl("span", "task-text", words));   // textContent keeps typed words safe
+
+      if (i === nowIndex) {
+        card.classList.add("is-now");
+        card.appendChild(makeEl("span", "now-tag", T.now));
+      }
+      if (task.done) {
+        card.classList.add("is-done");
+        const tick = makeEl("span", "done-tick");
+        setMarkup(tick, icon("tick"));
+        card.appendChild(tick);
+      }
+      card.setAttribute("aria-pressed", task.done ? "true" : "false");
+      card.setAttribute("aria-label", words + (task.done ? ", " + T.doneWord : (i === nowIndex ? ", " + T.now : "")));
+      card.addEventListener("click", function () {
+        task.done = !task.done;
+        renderStrip();
+      });
+
+      item.appendChild(card);
+      taskStrip.appendChild(item);
+    });
+    centreNowCard();
+  }
+
+  // ---------- B: slide the row so the "Now" card is always in view ----------
+  function centreNowCard() {
+    const card = taskStrip.querySelector(".task-card.is-now");
+    if (!card || taskStrip.clientWidth === 0) return;
+    const c = card.getBoundingClientRect(), s = taskStrip.getBoundingClientRect();
+    taskStrip.scrollLeft += (c.left + c.width / 2) - (s.left + s.width / 2);
+  }
+
+  // ---------- Teacher panel: the editable list ----------
+  function renderEditor() {
+    taskEditor.replaceChildren();
+    taskEmpty.hidden = tasks.length > 0;
+    $("clearTasks").hidden = tasks.length === 0;
+
+    tasks.forEach(function (task, i) {
+      const row = makeEl("li", "editor-row");
+      row.appendChild(makeTile(SYMBOL_BY_ID[task.symbol]));
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 40;
+      input.value = task.text;
+      input.setAttribute("aria-label", T.taskWords);
+      input.addEventListener("input", function () {
+        task.text = input.value;
+        renderStrip();                       // update cards without losing typing focus
+      });
+      input.addEventListener("change", function () {   // left empty? put the words back
+        if (!input.value.trim()) {
+          task.text = defaultWords(task.symbol);
+          input.value = task.text;
+          renderStrip();
+        }
+      });
+      row.appendChild(input);
+
+      const buttons = makeEl("div", "row-btns");
+      [["up", T.moveUp, i === 0, -1], ["down", T.moveDown, i === tasks.length - 1, 1]].forEach(function (cfg) {
+        const b = makeEl("button", "mini");
+        b.type = "button";
+        setMarkup(b, icon(cfg[0]));
+        b.setAttribute("aria-label", cfg[1]);
+        b.disabled = cfg[2];
+        b.addEventListener("click", function () {
+          const j = i + cfg[3];
+          const moved = tasks.splice(i, 1)[0];
+          tasks.splice(j, 0, moved);
+          renderStrip();
+          renderEditor();
+        });
+        buttons.appendChild(b);
+      });
+      const del = makeEl("button", "mini");
+      del.type = "button";
+      setMarkup(del, icon("cross"));
+      del.setAttribute("aria-label", T.remove);
+      del.addEventListener("click", function () {
+        tasks.splice(i, 1);
+        renderStrip();
+        renderEditor();
+      });
+      buttons.appendChild(del);
+      row.appendChild(buttons);
+
+      taskEditor.appendChild(row);
+    });
+  }
+
+  // ---------- The premade card library ----------
+  (function buildLibrary() {
+    const library = $("library");
+    SYMBOLS.forEach(function (symbol) {
+      const card = makeEl("button", "lib-card");
+      card.type = "button";
+      card.appendChild(makeTile(symbol));
+      card.appendChild(makeEl("span", "", symbol[LANG] || symbol.en));
+      card.addEventListener("click", function () { addTask(symbol.id); });
+      library.appendChild(card);
+    });
+  })();
+
+  $("clearTasks").addEventListener("click", function () {
+    tasks = [];
+    renderStrip();
+    renderEditor();
+  });
+
+  /* ===================================================================
+     PART C10 : TEACHER PANEL
+  =================================================================== */
+  const panel = $("panel");
+  let panelOpener = null;
+
+  function showSection(name) {
+    $("sectionTimer").hidden = name !== "timer";
+    $("sectionTasks").hidden = name !== "tasks";
+    $("pTabTimer").setAttribute("aria-selected", String(name === "timer"));
+    $("pTabTasks").setAttribute("aria-selected", String(name === "tasks"));
+    $("pTabTimer").tabIndex = name === "timer" ? 0 : -1;   // arrow keys move between tabs
+    $("pTabTasks").tabIndex = name === "tasks" ? 0 : -1;
+  }
+
+  function openPanel(section, opener) {
+    unlockAudio();
+    panelOpener = opener || null;
+    showSection(section);
+    fillCustomBoxes();
+    panel.inert = false;
+    panel.classList.add("open");
+    $("panelClose").focus();
+  }
+
+  function closePanel() {
+    if (!panel.classList.contains("open")) return;
+    panel.classList.remove("open");
+    panel.inert = true;
+    if (panelOpener) panelOpener.focus();
+  }
+
+  $("openTimerPanel").addEventListener("click", function () { openPanel("timer", this); });
+  $("openTasksPanel").addEventListener("click", function () { openPanel("tasks", this); });
+  $("panelClose").addEventListener("click", closePanel);
+  $("pTabTimer").addEventListener("click", function () { showSection("timer"); });
+  $("pTabTasks").addEventListener("click", function () { showSection("tasks"); });
+  document.querySelector(".panel-tabs").addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const next = $("sectionTimer").hidden ? "timer" : "tasks";
+    showSection(next);
+    $(next === "timer" ? "pTabTimer" : "pTabTasks").focus();
+    e.preventDefault();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closePanel(); });
+
+  // Quick-pick buttons
+  const presetBox = $("presets");
+  PRESET_MINUTES.forEach(function (minutes) {
+    const b = makeEl("button", "preset", minutes + " " + T.minShort);
+    b.type = "button";
+    b.dataset.ms = minutes * 60000;
+    b.addEventListener("click", function () {
+      setDuration(minutes * 60000);
+      $("customMin").value = minutes;
+      $("customSec").value = 0;
+    });
+    presetBox.appendChild(b);
+  });
+  function markPreset() {
+    presetBox.querySelectorAll(".preset").forEach(function (b) {
+      b.classList.toggle("selected", Number(b.dataset.ms) === timer.totalMs);
+    });
+  }
+
+  // ---------- Custom time ----------
+  function fillCustomBoxes() {
+    const totalSeconds = Math.round(timer.totalMs / 1000);
+    $("customMin").value = Math.floor(totalSeconds / 60);
+    $("customSec").value = totalSeconds % 60;
+  }
+  function customMs() {
+    const m = Math.min(60, Math.max(0, parseInt($("customMin").value, 10) || 0));
+    const s = Math.min(59, Math.max(0, parseInt($("customSec").value, 10) || 0));
+    return (m * 60 + s) * 1000;
+  }
+  // Use the typed time if it is different from what the timer is set to
+  function applyCustomTime() {
+    const ms = customMs();
+    if (ms > 0 && safeDuration(ms) !== timer.totalMs) setDuration(ms);
+    fillCustomBoxes();                       // show the time actually used (e.g. 60:30 -> 60:00)
+  }
+  $("customSet").addEventListener("click", applyCustomTime);
+  ["customMin", "customSec"].forEach(function (id) {
+    $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") applyCustomTime(); });
+  });
+
+  $("chimeToggle").checked = chimeOn;
+  $("chimeToggle").addEventListener("change", function () { chimeOn = this.checked; });
+
+  $("panelStart").addEventListener("click", function () {
+    applyCustomTime();                       // typed a time but did not press Set? Use it.
+    startTimer();
+    closePanel();
+  });
+
+  /* ===================================================================
+     PART C11 : SWITCHING VIEWS
+     The timer keeps running in the background while the Clock view is
+     open. A link ending in #timer opens straight onto the timer.
+  =================================================================== */
+  function showView(name) {
+    currentView = name === "timer" ? "timer" : "clock";
+    $("viewClock").hidden = currentView !== "clock";
+    $("viewTimer").hidden = currentView !== "timer";
+    $("tabClock").setAttribute("aria-selected", String(currentView === "clock"));
+    $("tabTimer").setAttribute("aria-selected", String(currentView === "timer"));
+    $("tabClock").tabIndex = currentView === "clock" ? 0 : -1;
+    $("tabTimer").tabIndex = currentView === "timer" ? 0 : -1;
+    document.body.dataset.view = currentView;
+    $("viewTitle").textContent = currentView === "clock" ? T.titleClock : T.titleTimer;
+    $("timerActions").hidden = currentView !== "timer";
+    if (currentView !== "timer") closePanel();
+    try { history.replaceState(null, "", "#" + currentView); } catch (e) { /* some embeds block this */ }
+    renderTimer();
+    if (currentView === "timer") centreNowCard();
+  }
+
+  $("tabClock").addEventListener("click", function () { showView("clock"); });
+  $("tabTimer").addEventListener("click", function () { showView("timer"); });
+  document.querySelector(".tabs").addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const next = currentView === "clock" ? "timer" : "clock";
+    showView(next);
+    $(next === "clock" ? "tabClock" : "tabTimer").focus();
+    e.preventDefault();
+  });
+  window.addEventListener("hashchange", function () {
+    const h = location.hash.replace("#", "");
+    if (h === "timer" || h === "clock") showView(h);
+  });
+  window.addEventListener("resize", centreNowCard);
+
+  /* ===================================================================
+     PART C12 : START EVERYTHING
+  =================================================================== */
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+      clock.draw(new Date());
+      timerLoop();
+      if (timer.state === "running") syncWakeLock();   // browsers drop it when hidden
+    }
+  });
+
+  const startHash = (location.hash || "").replace("#", "");
+  showView(startHash === "timer" || startHash === "clock" ? startHash : SETTINGS.startView);
+  markPreset();
+  renderStrip();
+  renderEditor();
+  clock.start();
+  setInterval(timerLoop, 200);
+
+  // Everything started, so the "could not start" message is not needed
+  $("startupWarning").remove();
 })();
 </script>
 </body>
